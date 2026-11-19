@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Manifest is valid JSON and has the files it points to
+        run: |
+          node -e "
+            const fs = require('fs');
+            const m = JSON.parse(fs.readFileSync('orca-plugin.json', 'utf8'));
+            const files = [m.main, m.icon, ...m.contributes.panels.map((p) => p.entry), ...(m.screenshots || []).map((s) => s.path)];
+            const missing = files.filter((f) => !fs.existsSync(f));
+            if (missing.length) { console.error('missing files:', missing); process.exit(1); }
+            const tag = process.env.GITHUB_REF_TYPE === 'tag' ? process.env.GITHUB_REF_NAME : null;
+            if (tag && tag !== 'v' + m.version) { console.error('tag', tag, 'does not match version', m.version); process.exit(1); }
+          "
+      - name: Unit tests (parsers, docker commands, validation)
+        run: node --test src/docker.test.ts src/i18n.test.ts

@@ -2,8 +2,8 @@
   "manifestVersion": 2,
   "id": "docker-containers",
   "name": "Docker Containers",
-  "version": "0.1.0",
-  "description": "Lista os containers do Docker, agrupados por projeto Compose, na barra lateral direita do Orca, com logs, iniciar, parar e reiniciar. / Docker containers panel for the Orca right sidebar.",
+  "version": "0.2.0",
+  "description": "Docker containers in the Orca right sidebar, grouped by Compose project: live status, ports, logs, start, stop and restart.",
   "engines": {
     "orca": ">=1.4.246"
   },
@@ -24,6 +24,28 @@
   "capabilities": [
     {
       "kind": "storage:own"
+    }
+  ],
+  "license": "MIT",
+  "repository": "https://github.com/ricardo-benicio/orca-docker-containers",
+  "homepage": "https://github.com/ricardo-benicio/orca-docker-containers",
+  "author": {
+    "name": "ricardo-benicio",
+    "url": "https://github.com/ricardo-benicio"
+  },
+  "icon": "assets/icon.png",
+  "screenshots": [
+    {
+      "path": "assets/screenshots/grouped.png",
+      "caption": "Containers grouped by Compose project, with ports, status and one-click actions",
+      "theme": "dark",
+      "alt": "Orca sidebar panel listing Docker containers grouped by Compose project, with status badges, published ports and start, stop, restart and logs buttons"
+    },
+    {
+      "path": "assets/screenshots/live-status.png",
+      "caption": "Updates instantly when a container starts or stops, even from the terminal",
+      "theme": "dark",
+      "alt": "The same panel after one container stopped: its badge changes to exited and the active counter drops, without pressing refresh"
     }
   ]
 }

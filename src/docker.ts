@@ -1,33 +1,47 @@
 // Funções puras e chamadas ao CLI do Docker. Sem shell: execFile com argumentos fixos.
 import { execFile } from 'node:child_process'
-import type { ContainerRow } from './protocol'
+import type { Action, ContainerRow, DockerErrorCode, PublishedPort } from './protocol'
 
 const ID_PATTERN = /^[a-f0-9]{12,64}$/
+const PROJECT_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/
 const ACTIONS = new Set(['start', 'stop', 'restart'])
+const PROJECT_LABEL = 'com.docker.compose.project'
+
+export class DockerError extends Error {
+  readonly code: DockerErrorCode
+  constructor(code: DockerErrorCode, message: string) {
+    super(message)
+    this.code = code
+  }
+}
 
 export function isValidId(id: unknown): id is string {
   return typeof id === 'string' && ID_PATTERN.test(id)
 }
 
-export function isValidAction(action: unknown): action is 'start' | 'stop' | 'restart' {
+export function isValidProject(project: unknown): project is string {
+  return typeof project === 'string' && PROJECT_PATTERN.test(project)
+}
+
+export function isValidAction(action: unknown): action is Action {
   return typeof action === 'string' && ACTIONS.has(action)
 }
 
-/** "0.0.0.0:5432->5432/tcp, :::5432->5432/tcp" vira ["5432→5432"]. */
-export function parsePorts(raw: string): string[] {
-  const seen = new Set<string>()
+/** "0.0.0.0:5432->5432/tcp, :::5432->5432/tcp, 6379/tcp" vira [{ host: 5432, container: 5432 }]. */
+export function parsePorts(raw: string): PublishedPort[] {
+  const seen = new Map<string, PublishedPort>()
   for (const part of raw.split(',')) {
     const match = /:(\d+)->(\d+)\/(?:tcp|udp)/.exec(part)
-    if (match) seen.add(`${match[1]}→${match[2]}`)
+    if (!match) continue
+    const port = { host: Number(match[1]), container: Number(match[2]) }
+    seen.set(`${port.host}:${port.container}`, port)
   }
-  return [...seen]
+  return [...seen.values()]
 }
 
 export function parseProject(labels: string): string | null {
   for (const pair of labels.split(',')) {
-    if (pair.startsWith('com.docker.compose.project=')) {
-      return pair.slice('com.docker.compose.project='.length) || null
-    }
+    if (pair.startsWith(`${PROJECT_LABEL}=`)) return pair.slice(PROJECT_LABEL.length + 1) || null
   }
   return null
 }
@@ -62,38 +76,58 @@ export function parseList(stdout: string): ContainerRow[] {
     .filter((row): row is ContainerRow => row !== null)
 }
 
-function run(args: string[], signal?: AbortSignal): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      'docker',
-      args,
-      { maxBuffer: 4 * 1024 * 1024, timeout: 20_000, signal },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(stderr.trim() || error.message))
-          return
-        }
-        resolve({ stdout, stderr })
+/** Traduz a falha do CLI numa categoria que o painel sabe explicar. */
+export function classifyError(code: unknown, stderr: string): DockerErrorCode {
+  if (code === 'ENOENT') return 'docker_missing'
+  const text = stderr.toLowerCase()
+  if (text.includes('permission denied')) return 'permission'
+  if (text.includes('cannot connect to the docker daemon') || text.includes('is the docker daemon running')) {
+    return 'daemon_down'
+  }
+  return 'unknown'
+}
+
+export type Runner = (args: string[], signal?: AbortSignal) => Promise<string>
+
+const defaultRunner: Runner = (args, signal) =>
+  new Promise((resolve, reject) => {
+    execFile('docker', args, { maxBuffer: 4 * 1024 * 1024, timeout: 20_000, signal }, (error, stdout, stderr) => {
+      if (error) {
+        const detail = stderr.trim() || error.message
+        reject(new DockerError(classifyError((error as NodeJS.ErrnoException).code, detail), detail))
+        return
       }
-    )
+      resolve([stdout, stderr].filter(Boolean).join(''))
+    })
   })
+
+let runner: Runner = defaultRunner
+
+/** Só para testes: troca o executor do CLI. Sem argumento, volta ao padrão. */
+export function setRunner(next?: Runner): void {
+  runner = next ?? defaultRunner
 }
 
 export async function listContainers(signal?: AbortSignal): Promise<ContainerRow[]> {
-  const { stdout } = await run(['ps', '-a', '--format', '{{json .}}'], signal)
-  return parseList(stdout)
+  return parseList(await runner(['ps', '-a', '--format', '{{json .}}'], signal))
 }
 
-export async function containerAction(
-  id: string,
-  action: 'start' | 'stop' | 'restart',
-  signal?: AbortSignal
-): Promise<void> {
-  await run([action, id], signal)
+export async function containerAction(id: string, action: Action, signal?: AbortSignal): Promise<void> {
+  await runner([action, id], signal)
+}
+
+/** Aplica a ação a todos os containers do projeto e devolve quantos foram alvo. */
+export async function projectAction(project: string, action: Action, signal?: AbortSignal): Promise<number> {
+  const out = await runner(
+    ['ps', '-a', '-q', '--no-trunc', '--filter', `label=${PROJECT_LABEL}=${project}`],
+    signal
+  )
+  const ids = out.split('\n').map((s) => s.trim()).filter(isValidId)
+  if (ids.length === 0) return 0
+  await runner([action, ...ids], signal)
+  return ids.length
 }
 
 export async function containerLogs(id: string, tail: number, signal?: AbortSignal): Promise<string> {
-  // Os logs do docker saem em stdout e stderr; juntamos os dois.
-  const { stdout, stderr } = await run(['logs', '--tail', String(tail), id], signal)
-  return [stdout, stderr].filter(Boolean).join('')
+  return runner(['logs', '--tail', String(tail), id], signal)
 }

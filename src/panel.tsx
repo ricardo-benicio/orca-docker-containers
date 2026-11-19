@@ -3,12 +3,12 @@ import {
   atom,
   Badge,
   Box,
-  Button,
   Callout,
   CodeView,
   Collapsible,
   derived,
   EmptyState,
+  env,
   Heading,
   IconButton,
   Input,
@@ -17,6 +17,7 @@ import {
   RelativeTime,
   Row,
   set,
+  shell,
   Skeleton,
   Stack,
   Switch,
@@ -25,12 +26,15 @@ import {
   type PanelContext,
   type Tone
 } from 'orca'
-import type { ContainerRow } from './protocol'
+import { translate, type Key } from './i18n'
+import type { Action, ContainerRow, DockerErrorCode } from './protocol'
 
-const POLL_MS = 5000
+/** Rede de segurança: os eventos do Docker já atualizam a lista na hora. */
+const FALLBACK_POLL_MS = 30_000
+const STANDALONE = '__standalone'
 
 const containers = atom<ContainerRow[] | null>(null)
-const error = atom<string | null>(null)
+const failure = atom<{ code: DockerErrorCode; error: string } | null>(null)
 const updatedAt = atom<number | null>(null)
 const busy = atom<readonly string[]>([])
 const logs = atom<{ id: string; name: string; text: string } | null>(null)
@@ -40,29 +44,21 @@ const query = atom('query', '', { persist: 'plugin' })
 const onlyRunning = atom('onlyRunning', false, { persist: 'plugin' })
 const collapsed = atom<readonly string[]>('collapsed', [], { persist: 'plugin' })
 
-const NO_PROJECT = 'Avulsos'
-
-const filtered = derived(() => {
-  const all = read(containers) ?? []
-  const text = read(query).trim().toLowerCase()
-  const running = read(onlyRunning)
-  return all.filter((c) => {
-    if (running && c.state !== 'running') return false
-    if (!text) return true
-    return [c.name, c.image, c.project ?? '', ...c.ports].some((v) => v.toLowerCase().includes(text))
-  })
-})
+const t = (key: Key, vars?: Record<string, string | number>): string => translate(env.locale, key, vars)
 
 const groups = derived(() => {
+  const text = read(query).trim().toLowerCase()
+  const running = read(onlyRunning)
   const byProject = new Map<string, ContainerRow[]>()
-  for (const c of read(filtered)) {
-    const key = c.project ?? NO_PROJECT
+  for (const c of read(containers) ?? []) {
+    if (running && c.state !== 'running') continue
+    const haystack = [c.name, c.image, c.project ?? '', ...c.ports.map((p) => String(p.host))]
+    if (text && !haystack.some((v) => v.toLowerCase().includes(text))) continue
+    const key = c.project ?? STANDALONE
     byProject.set(key, [...(byProject.get(key) ?? []), c])
   }
-  const runningIn = (rows: ContainerRow[]) => rows.filter((c) => c.state === 'running').length
-  return [...byProject.entries()].sort(
-    ([nameA, a], [nameB, b]) => runningIn(b) - runningIn(a) || nameA.localeCompare(nameB)
-  )
+  const up = (rows: ContainerRow[]) => rows.filter((c) => c.state === 'running').length
+  return [...byProject.entries()].sort(([a, rowsA], [b, rowsB]) => up(rowsB) - up(rowsA) || a.localeCompare(b))
 })
 
 function stateTone(state: string): Tone {
@@ -72,55 +68,75 @@ function stateTone(state: string): Tone {
   return 'neutral'
 }
 
+function errorText(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
+}
+
 async function refresh(): Promise<void> {
   try {
     const result = await plugin.request('containers.list')
     if (result.ok) {
       set(containers, result.containers)
       set(updatedAt, result.at)
-      set(error, null)
+      set(failure, null)
     } else {
-      set(error, result.error)
+      set(failure, { code: result.code, error: result.error })
     }
   } catch (cause) {
-    set(error, cause instanceof Error ? cause.message : String(cause))
+    set(failure, { code: 'unknown', error: errorText(cause) })
   }
 }
 
-async function act(row: ContainerRow, action: 'start' | 'stop' | 'restart'): Promise<void> {
-  update(busy, (ids) => [...ids, row.id])
+async function withBusy(ids: readonly string[], work: () => Promise<string | null>): Promise<void> {
+  update(busy, (current) => [...current, ...ids])
   try {
-    const result = await plugin.request('containers.action', { id: row.id, action })
-    set(notice, result.ok ? null : `${row.name}: ${result.error ?? 'falhou'}`)
+    set(notice, await work())
   } catch (cause) {
-    set(notice, `${row.name}: ${cause instanceof Error ? cause.message : String(cause)}`)
+    set(notice, errorText(cause))
   } finally {
-    update(busy, (ids) => ids.filter((id) => id !== row.id))
+    update(busy, (current) => current.filter((id) => !ids.includes(id)))
     await refresh()
   }
 }
 
+function act(row: ContainerRow, action: Action): Promise<void> {
+  return withBusy([row.id], async () => {
+    const result = await plugin.request('containers.action', { id: row.id, action })
+    return result.ok ? null : `${row.name}: ${result.error ?? t('failed')}`
+  })
+}
+
+function actProject(project: string, rows: ContainerRow[], action: Action): Promise<void> {
+  return withBusy(
+    rows.map((row) => row.id),
+    async () => {
+      const result = await plugin.request('project.action', { project, action })
+      return result.ok ? null : `${project}: ${result.error ?? t('failed')}`
+    }
+  )
+}
+
 async function showLogs(row: ContainerRow): Promise<void> {
-  set(logs, { id: row.id, name: row.name, text: 'Carregando...' })
+  set(logs, { id: row.id, name: row.name, text: t('logsLoading') })
   try {
     const result = await plugin.request('containers.logs', { id: row.id, tail: 200 })
-    set(logs, { id: row.id, name: row.name, text: result.text || '(sem saída)' })
+    set(logs, { id: row.id, name: row.name, text: result.text || t('logsEmpty') })
   } catch (cause) {
-    set(logs, { id: row.id, name: row.name, text: cause instanceof Error ? cause.message : String(cause) })
+    set(logs, { id: row.id, name: row.name, text: errorText(cause) })
   }
 }
 
-function toggleGroup(name: string, open: boolean): void {
-  update(collapsed, (names) => (open ? names.filter((n) => n !== name) : [...names, name]))
+function toggleGroup(key: string, open: boolean): void {
+  update(collapsed, (keys) => (open ? keys.filter((k) => k !== key) : [...keys, key]))
 }
 
 /** Roda uma vez antes do primeiro render; o que entra em `subscriptions` termina com o painel. */
 export function setup(ctx: PanelContext): void {
   void refresh()
+  ctx.subscriptions.push(plugin.on('containers.changed', () => void refresh()))
   const timer = setInterval(() => {
-    // Só consulta o Docker enquanto o painel está visível.
     if (read(ctx.visible)) void refresh()
-  }, POLL_MS)
+  }, FALLBACK_POLL_MS)
   ctx.subscriptions.push({ dispose: () => clearInterval(timer) })
 }
 
@@ -137,18 +153,35 @@ function ContainerItem({ row }: { row: ContainerRow }) {
           </Text>
         </Row>
         <Row gap="none">
-          <IconButton icon="file-text" label={`Logs de ${row.name}`} tooltip="Logs" size="xs" variant="ghost" onPress={() => showLogs(row)} />
-          <IconButton icon="refresh" label={`Reiniciar ${row.name}`} tooltip="Reiniciar" size="xs" variant="ghost" disabled={working || !running} onPress={() => act(row, 'restart')} />
+          <IconButton icon="file-text" label={t('logsOf', { name: row.name })} tooltip={t('logs')} size="xs" variant="ghost" onPress={() => showLogs(row)} />
+          <IconButton icon="refresh" label={t('restartName', { name: row.name })} tooltip={t('restart')} size="xs" variant="ghost" disabled={working || !running} onPress={() => act(row, 'restart')} />
           {running ? (
-            <IconButton icon="stop" label={`Parar ${row.name}`} tooltip="Parar" size="xs" variant="ghost" tone="danger" disabled={working} onPress={() => act(row, 'stop')} />
+            <IconButton icon="stop" label={t('stopName', { name: row.name })} tooltip={t('stop')} size="xs" variant="ghost" tone="danger" disabled={working} onPress={() => act(row, 'stop')} />
           ) : (
-            <IconButton icon="play" label={`Iniciar ${row.name}`} tooltip="Iniciar" size="xs" variant="ghost" tone="success" disabled={working} onPress={() => act(row, 'start')} />
+            <IconButton icon="play" label={t('startName', { name: row.name })} tooltip={t('start')} size="xs" variant="ghost" tone="success" disabled={working} onPress={() => act(row, 'start')} />
           )}
         </Row>
       </Row>
       <Text muted size="xs" truncate>
-        {[row.image, ...row.ports].join(' · ')}
+        {row.image}
       </Text>
+      {row.ports.length > 0 ? (
+        <Row gap="xs" wrap>
+          {row.ports.map((port) => (
+            <Row key={`${port.host}:${port.container}`} gap="none" align="center">
+              <Text muted size="xs">{`${port.host}→${port.container}`}</Text>
+              <IconButton
+                icon="open-external"
+                label={t('openPort', { port: port.host })}
+                tooltip={t('openPort', { port: port.host })}
+                size="xs"
+                variant="ghost"
+                onPress={() => shell.openExternal(`http://localhost:${port.host}`)}
+              />
+            </Row>
+          ))}
+        </Row>
+      ) : null}
       <Text muted size="xs" truncate>
         {row.status}
       </Text>
@@ -156,37 +189,56 @@ function ContainerItem({ row }: { row: ContainerRow }) {
   )
 }
 
+function ProjectActions({ project, rows }: { project: string; rows: ContainerRow[] }) {
+  const working = rows.some((row) => read(busy).includes(row.id))
+  const anyUp = rows.some((row) => row.state === 'running')
+  const anyDown = rows.some((row) => row.state !== 'running')
+  return (
+    <Row gap="none" justify="end">
+      <IconButton icon="play" label={t('startAll')} tooltip={t('startAll')} size="xs" variant="ghost" tone="success" disabled={working || !anyDown} onPress={() => actProject(project, rows, 'start')} />
+      <IconButton icon="refresh" label={t('restartAll')} tooltip={t('restartAll')} size="xs" variant="ghost" disabled={working || !anyUp} onPress={() => actProject(project, rows, 'restart')} />
+      <IconButton icon="stop" label={t('stopAll')} tooltip={t('stopAll')} size="xs" variant="ghost" tone="danger" disabled={working || !anyUp} onPress={() => actProject(project, rows, 'stop')} />
+    </Row>
+  )
+}
+
 export default function Panel() {
   const all = read(containers)
-  const failure = read(error)
+  const problem = read(failure)
   const stamp = read(updatedAt)
   const log = read(logs)
   const message = read(notice)
   const closed = read(collapsed)
+  const rows = read(groups)
   const total = all?.length ?? 0
   const up = all?.filter((c) => c.state === 'running').length ?? 0
+  const errKey = problem ? (`err${problem.code[0]?.toUpperCase()}${problem.code.slice(1)}` as Key) : null
+  const hintKey = problem ? (`hint${problem.code[0]?.toUpperCase()}${problem.code.slice(1)}` as Key) : null
 
   return (
     <Box padding="sm">
       <Stack gap="sm">
         <Row justify="between" align="center">
-          <Heading level={3}>Docker</Heading>
+          <Heading level={3}>{t('title')}</Heading>
           <Row gap="xs" align="center">
-            <Badge tone={up > 0 ? 'success' : 'neutral'}>{`${up}/${total} ativos`}</Badge>
-            <IconButton icon="refresh" label="Atualizar" tooltip="Atualizar" size="xs" variant="ghost" onPress={refresh} />
+            <Badge tone={up > 0 ? 'success' : 'neutral'}>{t('active', { up, total })}</Badge>
+            <IconButton icon="refresh" label={t('refresh')} tooltip={t('refresh')} size="xs" variant="ghost" onPress={refresh} />
           </Row>
         </Row>
 
-        <Input label="Filtrar containers" labelHidden type="search" placeholder="Filtrar por nome, imagem, porta..." value={read(query)} onChange={(v) => set(query, v)} />
-        <Switch label="Somente em execução" checked={read(onlyRunning)} onChange={(v) => set(onlyRunning, v)} />
+        <Input label={t('filterLabel')} labelHidden type="search" placeholder={t('filterPlaceholder')} value={read(query)} onChange={(v) => set(query, v)} />
+        <Switch label={t('onlyRunning')} checked={read(onlyRunning)} onChange={(v) => set(onlyRunning, v)} />
 
-        {failure ? (
-          <Callout tone="danger" title="Não foi possível falar com o Docker">
-            <Text size="xs">{failure}</Text>
+        {problem && errKey && hintKey ? (
+          <Callout tone="danger" title={t(errKey)}>
+            <Stack gap="xs">
+              {t(hintKey) ? <Text size="xs">{t(hintKey)}</Text> : null}
+              <Text muted size="xs">{problem.error}</Text>
+            </Stack>
           </Callout>
         ) : null}
         {message ? (
-          <Callout tone="warning" title="Ação não concluída">
+          <Callout tone="warning" title={t('actionFailed')}>
             <Text size="xs">{message}</Text>
           </Callout>
         ) : null}
@@ -194,40 +246,44 @@ export default function Panel() {
         {log ? (
           <Stack gap="xs">
             <Row justify="between" align="center">
-              <Text weight="semibold" truncate>{`Logs · ${log.name}`}</Text>
+              <Text weight="semibold" truncate>{t('logsTitle', { name: log.name })}</Text>
               <Row gap="none">
-                <IconButton icon="refresh" label="Recarregar logs" size="xs" variant="ghost" onPress={() => { const row = (all ?? []).find((c) => c.id === log.id); if (row) void showLogs(row) }} />
-                <IconButton icon="close" label="Fechar logs" size="xs" variant="ghost" onPress={() => set(logs, null)} />
+                <IconButton icon="refresh" label={t('reloadLogs')} size="xs" variant="ghost" onPress={() => { const row = (all ?? []).find((c) => c.id === log.id); if (row) void showLogs(row) }} />
+                <IconButton icon="close" label={t('closeLogs')} size="xs" variant="ghost" onPress={() => set(logs, null)} />
               </Row>
             </Row>
-            <CodeView code={log.text} label={`Logs de ${log.name}`} wrap maxHeight="lg" />
+            <CodeView code={log.text} label={t('logsOf', { name: log.name })} wrap maxHeight="lg" />
           </Stack>
         ) : null}
 
-        {all === null && !failure ? <Skeleton shape="text" lines={4} label="Carregando containers" /> : null}
+        {all === null && !problem ? <Skeleton shape="text" lines={4} label={t('loadingContainers')} /> : null}
 
-        {all !== null && read(groups).length === 0 ? (
-          <EmptyState icon="package" title="Nenhum container" description={total === 0 ? 'O Docker não tem containers.' : 'Nenhum container combina com o filtro.'} />
+        {all !== null && rows.length === 0 ? (
+          <EmptyState icon="package" title={t('noContainers')} description={total === 0 ? t('dockerEmpty') : t('filterEmpty')} />
         ) : null}
 
-        {read(groups).map(([name, rows]) => (
-          <Collapsible
-            key={name}
-            title={`${name} (${rows.filter((c) => c.state === 'running').length}/${rows.length})`}
-            open={!closed.includes(name)}
-            onChange={(open) => toggleGroup(name, open)}
-          >
-            <Stack gap="sm">
-              {rows.map((row) => (
-                <ContainerItem key={row.id} row={row} />
-              ))}
-            </Stack>
-          </Collapsible>
-        ))}
+        {rows.map(([key, group]) => {
+          const label = key === STANDALONE ? t('standalone') : key
+          return (
+            <Collapsible
+              key={key}
+              title={`${label} (${group.filter((c) => c.state === 'running').length}/${group.length})`}
+              open={!closed.includes(key)}
+              onChange={(open) => toggleGroup(key, open)}
+            >
+              <Stack gap="sm">
+                {key === STANDALONE ? null : <ProjectActions project={key} rows={group} />}
+                {group.map((row) => (
+                  <ContainerItem key={row.id} row={row} />
+                ))}
+              </Stack>
+            </Collapsible>
+          )
+        })}
 
         {stamp !== null ? (
           <Text muted size="xs">
-            Atualizado <RelativeTime at={stamp} muted />
+            {t('updated')} <RelativeTime at={stamp} muted />
           </Text>
         ) : null}
       </Stack>
