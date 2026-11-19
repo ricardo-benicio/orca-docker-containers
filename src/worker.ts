@@ -6,6 +6,7 @@ import { DEFAULTS, normalizeConfig, type Config } from './config'
 import {
   configureDocker,
   containerAction,
+  containerStats,
   containerLogs,
   DockerError,
   followLogsCommand,
@@ -182,6 +183,14 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       return { ok: true, count: await projectAction(input.project, input.action, signal) }
     } catch (error) {
       return { ok: false, count: 0, error: message(error) }
+    }
+  })
+
+  orca.panels.handle('containers.stats', async (_input, { signal }) => {
+    try {
+      return { ok: true as const, stats: await containerStats(signal) }
+    } catch (error) {
+      return { ok: false as const, error: message(error) }
     }
   })
 

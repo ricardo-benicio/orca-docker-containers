@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "docker-containers",
   "name": "Docker Containers",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Docker containers in the Orca sidebar, grouped by Compose project: live status, logs, shell, start/stop/restart, status bar counter and crash notifications.",
   "engines": {
     "orca": ">=1.4.248"
@@ -80,6 +80,13 @@
         "default": true
       },
       {
+        "key": "showStats",
+        "title": "Show CPU and memory per container",
+        "description": "Reads `docker stats` every few seconds while the panel is visible. Turn off if the extra Docker calls bother you.",
+        "type": "boolean",
+        "default": true
+      },
+      {
         "key": "statusBar",
         "title": "Show container count in the status bar",
         "type": "boolean",
@@ -121,9 +128,9 @@
     },
     {
       "path": "assets/screenshots/live-status.png",
-      "caption": "Compact rows grouped by Compose project, with the project actions in the group header",
+      "caption": "Live CPU and memory per container: memory near the limit turns red, high CPU turns amber",
       "theme": "dark",
-      "alt": "Docker panel with a Compose project header holding start, restart and stop buttons, above healthy containers showing image, uptime and port"
+      "alt": "Docker panel where each running container shows CPU and memory; one near its memory limit is red and one at 98 percent CPU is amber"
     }
   ]
 }

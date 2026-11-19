@@ -13,6 +13,7 @@ something starts or stops.
 - **Live.** Listens to `docker events`, so the list updates instantly, even when you start or stop
   something from a terminal. A 30-second refresh is kept as a safety net.
 - **Status at a glance.** Two compact lines per container: a coloured dot (filled when running, hollow when stopped), the image, a short uptime like `3h` and the published ports. A state word appears only when it matters (`unhealthy`, `restarting`, `paused`, `exited (3)`), and containers that need attention get a tinted row.
+- **CPU and memory.** Each running container shows its CPU and memory, refreshed every 5 seconds while the panel is visible. Memory above 75% of the container's limit turns amber and above 90% red; CPU above 80% turns amber. Turn it off in Settings → Plugins if you prefer fewer Docker calls.
 - **Actions.** Start, stop and restart a container, or a whole Compose project at once, with the project buttons in the group header. Click the project name to collapse it.
 - **Logs.** The last 200 lines of any container, right in the panel, or follow them live in an Orca terminal.
 - **Shell.** Open a shell inside a running container in a new Orca terminal (bash if the image has it, otherwise sh).
@@ -25,7 +26,7 @@ something starts or stops.
 - **Helpful errors.** Tells you when Docker is missing, stopped, or you lack permission, and how to fix it.
 - **English and Portuguese**, following Orca's language.
 
-![A healthy stack with a stopped container](assets/screenshots/live-status.png)
+![CPU and memory per container](assets/screenshots/live-status.png)
 
 ## Requirements
 
@@ -52,7 +53,7 @@ icon in the right sidebar tabs.
 ## Security
 
 This plugin runs a Node worker with your user's access (`trusted-worker`), which is why Orca asks for
-explicit approval. Version 0.3.0 asked for more than 0.2.0; 0.4.0 asks for nothing new. Here
+explicit approval. Version 0.3.0 asked for more than 0.2.0; 0.4.x and 0.5.0 ask for nothing new. Here
 is what each permission is used for, and nothing else:
 
 | Permission | Used for |
@@ -66,7 +67,7 @@ is what each permission is used for, and nothing else:
 
 What the worker runs:
 
-- `docker ps`, `docker inspect`, `docker logs`, `docker events` and `docker start|stop|restart <id…>`,
+- `docker ps`, `docker inspect`, `docker logs`, `docker events`, `docker stats --no-stream` and `docker start|stop|restart <id…>`,
   through `execFile` (no shell).
 - In a terminal, only `docker exec -it <id> sh -c '…bash or sh…'` and `docker logs -f --tail 200 <id>`.
   The id is checked to be hexadecimal, and the docker command and context you configure are checked

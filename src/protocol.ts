@@ -37,6 +37,18 @@ export type ContainerInfo = {
   mounts: { type: string; source: string; destination: string; rw: boolean }[]
 }
 
+/** Uso de recursos de um container em execução, lido de `docker stats --no-stream`. */
+export type ContainerStats = {
+  /** Percentual de CPU; passa de 100 quando usa mais de um núcleo. */
+  cpu: number
+  memBytes: number
+  /** Limite de memória do container (ou da máquina, quando não há limite). 0 quando desconhecido. */
+  memLimit: number
+  memPercent: number
+}
+
+export type StatsResult = { ok: true; stats: Record<string, ContainerStats> } | { ok: false; error: string }
+
 export type TerminalKind = 'shell' | 'logs'
 
 declare module 'orca' {
@@ -63,6 +75,8 @@ declare module 'orca' {
       input: { id: string; kind: TerminalKind; name?: string }
       output: { ok: boolean; code?: 'no_workspace' | 'failed'; error?: string }
     }
+    /** CPU e memória dos containers em execução, por id curto (12 caracteres). */
+    'containers.stats': { output: StatsResult }
     /** Últimas linhas de log de um container. */
     'containers.logs': {
       input: { id: string; tail?: number }

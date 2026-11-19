@@ -182,3 +182,58 @@ test('dentro do grupo, containers parados aparecem depois dos ativos', async () 
   assert.ok(at('web') < at('db'))
   await view.unmount()
 })
+
+const usage = {
+  [web.id.slice(0, 12)]: { cpu: 3.46, memBytes: 18.5 * 1024 ** 2, memLimit: 2 * 1024 ** 3, memPercent: 0.9 },
+  [sick.id.slice(0, 12)]: { cpu: 120, memBytes: 1.9 * 1024 ** 3, memLimit: 2 * 1024 ** 3, memPercent: 95 }
+}
+
+test('mostra CPU e memória dos containers em execução e destaca memória no limite', async () => {
+  const view = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: [web, sick, db], at: 1 }), { 'containers.stats': () => ({ ok: true, stats: usage }) })
+  })
+  assert.ok(shows(view, '· 3.5% CPU'))
+  assert.ok(shows(view, '· 19 MB'))
+  assert.ok(shows(view, '· 120% CPU'))
+  assert.ok(shows(view, '· 1.9 GB (95%)'))
+  assert.equal(shows(view, '(0.9%)'), false)
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
+
+test('container parado não mostra consumo, mesmo com número antigo', async () => {
+  const mixed = {
+    [web.id.slice(0, 12)]: { cpu: 3.46, memBytes: 18.5 * 1024 ** 2, memLimit: 0, memPercent: 1 },
+    [db.id.slice(0, 12)]: { cpu: 50, memBytes: 1024 ** 3, memLimit: 0, memPercent: 10 }
+  }
+  const view = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: [web, db], at: 1 }), { 'containers.stats': () => ({ ok: true, stats: mixed }) })
+  })
+  assert.ok(shows(view, '· 3.5% CPU'), 'os números do container rodando precisam ter chegado')
+  assert.equal(shows(view, '· 50% CPU'), false)
+  assert.equal(shows(view, '· 1 GB'), false)
+  await view.unmount()
+})
+
+test('sem stats o painel segue normal, sem erro na tela', async () => {
+  const failing = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: [web], at: 1 }), { 'containers.stats': () => ({ ok: false, error: 'boom' }) })
+  })
+  assert.equal(shows(failing, 'CPU'), false)
+  assert.equal(shows(failing, 'boom'), false)
+  assert.deepEqual(failing.errors, [])
+  await failing.unmount()
+})
+
+test('a configuração showStats desliga a leitura', async () => {
+  let calls = 0
+  const view = await mount(panel, {
+    host: mockHost({
+      settings: { showStats: false as never },
+      requests: { 'containers.list': () => ({ ok: true, containers: [web], at: 1 }), 'containers.stats': () => (calls++, { ok: true, stats: usage }) } as never
+    })
+  })
+  assert.equal(calls, 0)
+  assert.equal(shows(view, 'CPU'), false)
+  await view.unmount()
+})

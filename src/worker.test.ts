@@ -16,6 +16,7 @@ function fakeDocker(calls: string[][], failWith?: Error) {
     if (args[0] === 'ps') return `${row}\n`
     if (args[0] === 'logs') return 'linha 1\nlinha 2\n'
     if (args[0] === 'inspect') return inspect
+    if (args[0] === 'stats') return JSON.stringify({ ID, CPUPerc: '2.50%', MemUsage: '40MiB / 1GiB', MemPerc: '3.91%' }) + '\n'
     return ''
   })
 }
@@ -238,5 +239,30 @@ test('o comando de resumo lista os projetos', async () => {
     assert.match(text, /meu-app: 1\/1/)
   } finally {
     await finish(worker)
+  }
+})
+
+test('devolve CPU e memória por id e explica falhas sem derrubar o painel', async () => {
+  const calls: string[][] = []
+  fakeDocker(calls)
+  fakeWatcher()
+  const worker = await mount()
+  try {
+    const ok = await worker.request('containers.stats')
+    assert.equal(ok.ok, true)
+    if (ok.ok) assert.deepEqual(ok.stats[ID], { cpu: 2.5, memBytes: 40 * 1024 ** 2, memLimit: 1024 ** 3, memPercent: 3.91 })
+    assert.deepEqual(calls.filter((c) => c[0] === 'stats'), [['stats', '--no-stream', '--format', '{{json .}}']])
+  } finally {
+    await finish(worker)
+  }
+  const down = new DockerError('daemon_down', 'Cannot connect')
+  fakeDocker([], down)
+  fakeWatcher()
+  const failing = await mount()
+  try {
+    const result = await failing.request('containers.stats')
+    assert.equal(result.ok, false)
+  } finally {
+    await finish(failing)
   }
 })

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { compactDuration, isStopped, lookOf, sortRows } from './format.ts'
+import { compactDuration, cpuTone, formatBytes, formatCpu, isStopped, lookOf, memoryTone, sortRows } from './format.ts'
 
 test('encurta as durações do docker', () => {
   assert.equal(compactDuration('Less than a second'), '<1s')
@@ -78,4 +78,26 @@ test('parados vão para o fim e o resto fica em ordem de nome', () => {
   assert.equal(isStopped('dead'), true)
   assert.equal(isStopped('paused'), false)
   assert.deepEqual(rows[0], { name: 'queue', state: 'exited' })
+})
+
+test('formata memória e CPU curtas', () => {
+  assert.equal(formatBytes(0), '0 B')
+  assert.equal(formatBytes(900), '900 B')
+  assert.equal(formatBytes(471_040), '460 KB')
+  assert.equal(formatBytes(5 * 1024 ** 2 + 300_000), '5.3 MB')
+  assert.equal(formatBytes(18.5 * 1024 ** 2), '19 MB')
+  assert.equal(formatBytes(1.25 * 1024 ** 3), '1.3 GB')
+  assert.equal(formatCpu(0), '0%')
+  assert.equal(formatCpu(0.14), '0.1%')
+  assert.equal(formatCpu(3.46), '3.5%')
+  assert.equal(formatCpu(87.2), '87%')
+  assert.equal(formatCpu(243.5), '244%')
+})
+
+test('só destaca consumo que preocupa', () => {
+  assert.equal(memoryTone({ cpu: 0, memPercent: 40 }), null)
+  assert.equal(memoryTone({ cpu: 0, memPercent: 75 }), 'warning')
+  assert.equal(memoryTone({ cpu: 0, memPercent: 93 }), 'danger')
+  assert.equal(cpuTone({ cpu: 79, memPercent: 0 }), null)
+  assert.equal(cpuTone({ cpu: 120, memPercent: 0 }), 'warning')
 })

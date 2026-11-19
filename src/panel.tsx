@@ -27,15 +27,18 @@ import {
   update,
   type PanelContext
 } from 'orca'
-import { lookOf, sortRows, type Look } from './format'
+import { cpuTone, formatBytes, formatCpu, lookOf, memoryTone, sortRows, type Look } from './format'
 import { translate, type Key } from './i18n'
-import type { Action, ContainerInfo, ContainerRow, DockerErrorCode, TerminalKind } from './protocol'
+import type { Action, ContainerInfo, ContainerRow, ContainerStats, DockerErrorCode, TerminalKind } from './protocol'
 
 /** Rede de segurança: os eventos do Docker já atualizam a lista na hora. Ajustável nas configurações. */
 const DEFAULT_POLL_SECONDS = 30
 const STANDALONE = '__standalone'
+/** CPU e memória mudam rápido: lê com mais frequência que a lista, e só enquanto o painel está à vista. */
+const STATS_SECONDS = 5
 
 const containers = atom<ContainerRow[] | null>(null)
+const stats = atom<Record<string, ContainerStats>>({})
 const failure = atom<{ code: DockerErrorCode; error: string } | null>(null)
 const updatedAt = atom<number | null>(null)
 const busy = atom<readonly string[]>([])
@@ -80,6 +83,22 @@ async function refresh(): Promise<void> {
     }
   } catch (cause) {
     set(failure, { code: 'unknown', error: errorText(cause) })
+  }
+}
+
+let statsInFlight = false
+
+/** Falha de stats não vira erro na tela: o painel só fica sem os números. */
+async function refreshStats(): Promise<void> {
+  if (statsInFlight) return
+  statsInFlight = true
+  try {
+    const result = await plugin.request('containers.stats')
+    set(stats, result.ok ? result.stats : {})
+  } catch {
+    set(stats, {})
+  } finally {
+    statsInFlight = false
   }
 }
 
@@ -164,8 +183,37 @@ export function setup(ctx: PanelContext): void {
     }, seconds * 1000)
   }
   void arm()
-  ctx.subscriptions.push(settings.onDidChange(() => void arm()))
-  ctx.subscriptions.push({ dispose: () => timer && clearInterval(timer) })
+
+  let statsTimer: ReturnType<typeof setInterval> | null = null
+  const armStats = async (): Promise<void> => {
+    if (statsTimer) clearInterval(statsTimer)
+    statsTimer = null
+    let enabled = true
+    try {
+      enabled = (await settings.get('showStats')) !== false
+    } catch {
+      // Sem configurações: mostra os números.
+    }
+    if (!enabled) return void set(stats, {})
+    void refreshStats()
+    statsTimer = setInterval(() => {
+      if (read(ctx.visible) && (read(containers) ?? []).some((c) => c.state === 'running')) void refreshStats()
+    }, STATS_SECONDS * 1000)
+  }
+  void armStats()
+
+  ctx.subscriptions.push(
+    settings.onDidChange(() => {
+      void arm()
+      void armStats()
+    })
+  )
+  ctx.subscriptions.push({
+    dispose: () => {
+      if (timer) clearInterval(timer)
+      if (statsTimer) clearInterval(statsTimer)
+    }
+  })
 }
 
 function stateKey(word: NonNullable<Look['word']>): Key {
@@ -178,6 +226,9 @@ function ContainerItem({ row }: { row: ContainerRow }) {
   const look = lookOf(row)
   const wordText = look.word ? (look.code !== null ? `${t(stateKey(look.word))} (${look.code})` : t(stateKey(look.word))) : null
   const ageText = look.age && (look.word === 'exited' || look.word === 'restarting') ? t('ago', { time: look.age }) : look.age
+  const usage = running ? read(stats)[row.id] : undefined
+  const memTone = usage ? memoryTone(usage) : null
+  const cpuWarn = usage ? cpuTone(usage) : null
   return (
     <Box background={look.problem ?? 'none'} radius="sm" paddingX="xs" paddingY="xs">
       <Stack gap="none">
@@ -213,9 +264,19 @@ function ContainerItem({ row }: { row: ContainerRow }) {
               {`· ${ageText}`}
             </Text>
           ) : null}
-          {row.ports.map((port, index) => (
+          {usage ? (
+            <Text size="xs" muted={!cpuWarn} tone={cpuWarn ?? undefined}>
+              {`· ${formatCpu(usage.cpu)} CPU`}
+            </Text>
+          ) : null}
+          {usage ? (
+            <Text size="xs" muted={!memTone} tone={memTone ?? undefined}>
+              {`· ${formatBytes(usage.memBytes)}${memTone ? ` (${Math.round(usage.memPercent)}%)` : ''}`}
+            </Text>
+          ) : null}
+          {row.ports.map((port) => (
             <Row key={`${port.host}:${port.container}`} gap="none" align="center">
-              <Text muted size="xs">{`${index === 0 && (wordText || ageText) ? '· ' : ''}${port.host}→${port.container}`}</Text>
+              <Text muted size="xs">{`${port.host}→${port.container}`}</Text>
               <IconButton
                 icon="open-external"
                 label={t('openPort', { port: port.host })}

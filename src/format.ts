@@ -78,3 +78,31 @@ export function isStopped(state: string): boolean {
 export function sortRows<T extends { state: string; name: string }>(rows: readonly T[]): T[] {
   return [...rows].sort((a, b) => Number(isStopped(a.state)) - Number(isStopped(b.state)) || a.name.localeCompare(b.name))
 }
+
+/** Memória como o Docker mostra (base 1024), curta: "512 KB", "18 MB", "1.2 GB". */
+export function formatBytes(bytes: number): string {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = Math.max(bytes, 0)
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${value >= 10 || unit === 0 ? Math.round(value) : Math.round(value * 10) / 10} ${units[unit]}`
+}
+
+/** "0.1%", "3.4%", "87%", "240%". */
+export function formatCpu(percent: number): string {
+  return `${percent >= 10 ? Math.round(percent) : Math.round(percent * 10) / 10}%`
+}
+
+export type Usage = { cpu: number; memPercent: number }
+
+/** Realce do consumo: memória quase no limite é o que derruba container; CPU alta só avisa. */
+export function memoryTone(usage: Usage): 'danger' | 'warning' | null {
+  return usage.memPercent >= 90 ? 'danger' : usage.memPercent >= 75 ? 'warning' : null
+}
+
+export function cpuTone(usage: Usage): 'warning' | null {
+  return usage.cpu >= 80 ? 'warning' : null
+}

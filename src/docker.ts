@@ -1,7 +1,7 @@
 // Funções puras e chamadas ao CLI do Docker. Sem shell: execFile com argumentos fixos.
 import { execFile } from 'node:child_process'
 import { DEFAULTS, isSafeContext, isSafePath } from './config.ts'
-import type { Action, ContainerInfo, ContainerRow, DockerErrorCode, PublishedPort } from './protocol'
+import type { Action, ContainerInfo, ContainerRow, ContainerStats, DockerErrorCode, PublishedPort } from './protocol'
 
 const ID_PATTERN = /^[a-f0-9]{12,64}$/
 const PROJECT_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/
@@ -203,4 +203,51 @@ export async function inspectContainer(id: string, signal?: AbortSignal): Promis
   const info = parseInspect(await runner(['inspect', id], signal))
   if (!info) throw new DockerError('unknown', 'could not read docker inspect output')
   return info
+}
+
+const SIZE_UNITS: Record<string, number> = {
+  b: 1,
+  kb: 1e3, mb: 1e6, gb: 1e9, tb: 1e12,
+  kib: 1024, mib: 1024 ** 2, gib: 1024 ** 3, tib: 1024 ** 4
+}
+
+/** "18.5MiB" vira bytes; "--" ou texto estranho vira null. */
+export function parseSize(text: string): number | null {
+  const match = /^([\d.]+)\s*([a-zA-Z]+)$/.exec(text.trim())
+  const unit = match ? SIZE_UNITS[match[2]!.toLowerCase()] : undefined
+  if (!match || unit === undefined) return null
+  const value = Number(match[1])
+  return Number.isFinite(value) ? Math.round(value * unit) : null
+}
+
+function parsePercent(text: unknown): number | null {
+  if (typeof text !== 'string') return null
+  const match = /^([\d.]+)%$/.exec(text.trim())
+  return match ? Number(match[1]) : null
+}
+
+/** Uma linha de `docker stats --format '{{json .}}'`; linhas sem dados (`--`) são ignoradas. */
+export function parseStats(stdout: string): Record<string, ContainerStats> {
+  const result: Record<string, ContainerStats> = {}
+  for (const line of stdout.split('\n')) {
+    if (!line.trim()) continue
+    let raw: Record<string, unknown>
+    try {
+      raw = JSON.parse(line) as Record<string, unknown>
+    } catch {
+      continue
+    }
+    const id = typeof raw.ID === 'string' ? raw.ID : ''
+    const cpu = parsePercent(raw.CPUPerc)
+    const [used, limit] = typeof raw.MemUsage === 'string' ? raw.MemUsage.split('/') : []
+    const memBytes = used === undefined ? null : parseSize(used)
+    if (!isValidId(id) || cpu === null || memBytes === null) continue
+    result[id] = { cpu, memBytes, memLimit: (limit === undefined ? null : parseSize(limit)) ?? 0, memPercent: parsePercent(raw.MemPerc) ?? 0 }
+  }
+  return result
+}
+
+/** Uma leitura (`--no-stream`) de todos os containers em execução. */
+export async function containerStats(signal?: AbortSignal): Promise<Record<string, ContainerStats>> {
+  return parseStats(await runner(['stats', '--no-stream', '--format', '{{json .}}'], signal))
 }

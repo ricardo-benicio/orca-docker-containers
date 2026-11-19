@@ -15,6 +15,9 @@ import {
   isValidProject,
   listContainers,
   parseLine,
+  parseSize,
+  parseStats,
+  containerStats,
   parsePorts,
   parseProject,
   projectAction,
@@ -129,4 +132,36 @@ test('lê do docker inspect só os campos seguros, sem variáveis de ambiente', 
   assert.equal(JSON.stringify(info).includes('segredo'), false)
   assert.equal(parseInspect('não é json'), null)
   assert.equal(parseInspect('[]'), null)
+})
+
+const statsLine = '{"BlockIO":"0B / 0B","CPUPerc":"0.00%","Container":"77c324ab494951a5c8fc3ba9d64b10755fa5a273a5414fc6c109d779153be44e","ID":"77c324ab4949","MemPerc":"0.00%","MemUsage":"460KiB / 13.56GiB","Name":"orca-teste-stats","NetIO":"1.1kB / 126B","PIDs":"1"}'
+
+test('converte tamanhos do docker em bytes', () => {
+  assert.equal(parseSize('460KiB'), 471_040)
+  assert.equal(parseSize('18.5MiB'), Math.round(18.5 * 1024 ** 2))
+  assert.equal(parseSize('13.56GiB'), Math.round(13.56 * 1024 ** 3))
+  assert.equal(parseSize('1.1kB'), 1100)
+  assert.equal(parseSize('0B'), 0)
+  assert.equal(parseSize('--'), null)
+  assert.equal(parseSize('abc'), null)
+  assert.equal(parseSize('3 furlongs'), null)
+})
+
+test('lê CPU e memória por id curto e ignora linhas sem dados', () => {
+  const other = '{"ID":"aaaaaaaaaaaa","CPUPerc":"243.50%","MemUsage":"1.5GiB / 2GiB","MemPerc":"75.00%"}'
+  const empty = '{"ID":"bbbbbbbbbbbb","CPUPerc":"--","MemUsage":"-- / --","MemPerc":"--"}'
+  const stats = parseStats([statsLine, other, empty, 'não é json', '', '{"CPUPerc":"1%"}'].join('\n'))
+  assert.deepEqual(Object.keys(stats).sort(), ['77c324ab4949', 'aaaaaaaaaaaa'])
+  assert.deepEqual(stats['77c324ab4949'], { cpu: 0, memBytes: 471_040, memLimit: Math.round(13.56 * 1024 ** 3), memPercent: 0 })
+  assert.equal(stats.aaaaaaaaaaaa!.cpu, 243.5)
+  assert.equal(stats.aaaaaaaaaaaa!.memPercent, 75)
+})
+
+test('pede uma única leitura, sem ficar ouvindo', async () => {
+  const calls: string[][] = []
+  setRunner(async (args) => (calls.push(args), statsLine))
+  const stats = await containerStats()
+  setRunner()
+  assert.deepEqual(calls, [['stats', '--no-stream', '--format', '{{json .}}']])
+  assert.equal(stats['77c324ab4949']!.memBytes, 471_040)
 })
