@@ -1,0 +1,29 @@
+{
+  "manifestVersion": 2,
+  "id": "docker-containers",
+  "name": "Docker Containers",
+  "version": "0.1.0",
+  "description": "Lista os containers do Docker, agrupados por projeto Compose, na barra lateral direita do Orca, com logs, iniciar, parar e reiniciar. / Docker containers panel for the Orca right sidebar.",
+  "engines": {
+    "orca": ">=1.4.246"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "contributes": {
+    "panels": [
+      {
+        "id": "docker-containers",
+        "title": "Docker",
+        "icon": "package",
+        "entry": "src/panel.tsx",
+        "ui": "components"
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "kind": "storage:own"
+    }
+  ]
+}
