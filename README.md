@@ -14,7 +14,7 @@ something starts or stops.
   something from a terminal. A 30-second refresh is kept as a safety net.
 - **Status at a glance.** Two compact lines per container: a coloured dot (filled when running, hollow when stopped), the image, a short uptime like `3h` and the published ports. A state word appears only when it matters (`unhealthy`, `restarting`, `paused`, `exited (3)`), and containers that need attention get a tinted row.
 - **CPU and memory.** Each running container shows its CPU and memory, refreshed every 5 seconds while the panel is visible. Memory above 75% of the container's limit turns amber and above 90% red; CPU above 80% turns amber. Turn it off in Settings → Plugins if you prefer fewer Docker calls.
-- **Actions.** Start, stop and restart a container, or a whole Compose project at once, with the project buttons in the group header. Click the project name to collapse it.
+- **Actions.** Start, stop and restart a container, or a whole Compose project at once, with the project buttons in the group header. Stopping or restarting a whole project asks for confirmation first (starting does not). Click the project name to collapse it.
 - **Logs.** The last 200 lines of any container, right in the panel, or follow them live in an Orca terminal.
 - **Shell.** Open a shell inside a running container in a new Orca terminal (bash if the image has it, otherwise sh).
 - **Details.** Image, command, restart policy, networks and volumes (never environment variables or labels).
@@ -53,7 +53,7 @@ icon in the right sidebar tabs.
 ## Security
 
 This plugin runs a Node worker with your user's access (`trusted-worker`), which is why Orca asks for
-explicit approval. Version 0.3.0 asked for more than 0.2.0; 0.4.x and 0.5.0 ask for nothing new. Here
+explicit approval. Version 0.3.0 asked for more than 0.2.0; 0.4.x to 0.6.x ask for nothing new. Here
 is what each permission is used for, and nothing else:
 
 | Permission | Used for |

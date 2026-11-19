@@ -39,6 +39,7 @@ test('parar um container e agir em todo o projeto chamam o worker', async () => 
   })
   await view.press({ label: 'Stop web' })
   await view.press({ label: 'Restart all' })
+  await view.press({ text: 'Restart all' })
   assert.deepEqual(seen, [
     { id: web.id, action: 'stop' },
     { project: 'meu-app', action: 'restart' }
@@ -235,5 +236,54 @@ test('a configuração showStats desliga a leitura', async () => {
   })
   assert.equal(calls, 0)
   assert.equal(shows(view, 'CPU'), false)
+  await view.unmount()
+})
+
+test('parar o projeto inteiro só acontece depois de confirmar', async () => {
+  const seen: unknown[] = []
+  const view = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: [web, sick, db], at: 1 }), {
+      'project.action': (input: unknown) => (seen.push(input), { ok: true, count: 3 })
+    })
+  })
+  await view.press({ label: 'Stop all' })
+  assert.deepEqual(seen, [], 'o clique no ícone só pergunta')
+  assert.ok(shows(view, 'Stop 2 running containers in meu-app?'))
+  assert.equal(shows(view, 'Start all'), false, 'os ícones do projeto saem enquanto pergunta')
+  await view.press({ text: 'Cancel' })
+  assert.deepEqual(seen, [], 'cancelar não chama o docker')
+  assert.equal(shows(view, 'Stop 2 running containers in meu-app?'), false)
+  assert.ok(shows(view, 'Start all'))
+  await view.press({ label: 'Stop all' })
+  await view.press({ text: 'Stop all' })
+  assert.deepEqual(seen, [{ project: 'meu-app', action: 'stop' }])
+  assert.equal(shows(view, 'Stop 2 running containers in meu-app?'), false)
+  await view.unmount()
+})
+
+test('reiniciar o projeto também pergunta, contando todos os containers; iniciar não pergunta', async () => {
+  const seen: unknown[] = []
+  const view = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: [web, db], at: 1 }), {
+      'project.action': (input: unknown) => (seen.push(input), { ok: true, count: 2 })
+    })
+  })
+  await view.press({ label: 'Restart all' })
+  assert.ok(shows(view, 'Restart all 2 containers in meu-app?'))
+  assert.deepEqual(seen, [])
+  await view.press({ text: 'Cancel' })
+  await view.press({ label: 'Start all' })
+  assert.deepEqual(seen, [{ project: 'meu-app', action: 'start' }])
+  await view.unmount()
+})
+
+test('a pergunta de um projeto não afeta os outros e usa o singular', async () => {
+  const other: ContainerRow = { ...web, id: 'f'.repeat(12), name: 'blog', project: 'blog' }
+  const view = await mount(panel, { host: hostWith(() => ({ ok: true, containers: [web, other], at: 1 })) })
+  await view.press({ label: 'Stop all' })
+  assert.ok(shows(view, 'Stop the running container in blog?'))
+  assert.equal(shows(view, 'in meu-app?'), false)
+  assert.equal(shows(view, 'Stop 1 running containers'), false)
+  assert.ok(shows(view, 'Start all'), 'o outro projeto mantém seus ícones')
   await view.unmount()
 })

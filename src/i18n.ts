@@ -73,7 +73,12 @@ const en = {
   stateExited: 'exited',
   stateCreated: 'created',
   stateDead: 'dead',
-  ago: '{time} ago'
+  ago: '{time} ago',
+  cancel: 'Cancel',
+  confirmStopOne: 'Stop the running container in {project}?',
+  confirmStopMany: 'Stop {count} running containers in {project}?',
+  confirmRestartOne: 'Restart the container in {project}?',
+  confirmRestartMany: 'Restart all {count} containers in {project}?'
 }
 
 export type Key = keyof typeof en
@@ -152,7 +157,12 @@ const pt: Record<Key, string> = {
   stateExited: 'parado',
   stateCreated: 'criado',
   stateDead: 'morto',
-  ago: 'há {time}'
+  ago: 'há {time}',
+  cancel: 'Cancelar',
+  confirmStopOne: 'Parar o container em execução em {project}?',
+  confirmStopMany: 'Parar {count} containers em execução em {project}?',
+  confirmRestartOne: 'Reiniciar o container de {project}?',
+  confirmRestartMany: 'Reiniciar os {count} containers de {project}?'
 }
 
 export function translate(locale: string | undefined, key: Key, vars: Record<string, string | number> = {}): string {

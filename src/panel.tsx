@@ -44,6 +44,8 @@ const updatedAt = atom<number | null>(null)
 const busy = atom<readonly string[]>([])
 const logs = atom<{ id: string; name: string; text: string } | null>(null)
 const notice = atom<string | null>(null)
+/** Parar ou reiniciar o projeto inteiro pede confirmação; só um pedido por vez. */
+const confirming = atom<{ project: string; action: 'stop' | 'restart' } | null>(null)
 const detail = atom<{ row: ContainerRow; info: ContainerInfo | null; error: string | null } | null>(null)
 
 const query = atom('query', '', { persist: 'plugin' })
@@ -338,25 +340,59 @@ function ProjectActions({ project, rows }: { project: string; rows: ContainerRow
   return (
     <Row gap="none">
       <IconButton icon="play" label={t('startAll')} tooltip={t('startAll')} size="xs" variant="ghost" disabled={working || !anyDown} onPress={() => actProject(project, rows, 'start')} />
-      <IconButton icon="refresh" label={t('restartAll')} tooltip={t('restartAll')} size="xs" variant="ghost" disabled={working || !anyUp} onPress={() => actProject(project, rows, 'restart')} />
-      <IconButton icon="stop" label={t('stopAll')} tooltip={t('stopAll')} size="xs" variant="ghost" disabled={working || !anyUp} onPress={() => actProject(project, rows, 'stop')} />
+      <IconButton icon="refresh" label={t('restartAll')} tooltip={t('restartAll')} size="xs" variant="ghost" disabled={working || !anyUp} onPress={() => set(confirming, { project, action: 'restart' })} />
+      <IconButton icon="stop" label={t('stopAll')} tooltip={t('stopAll')} size="xs" variant="ghost" disabled={working || !anyUp} onPress={() => set(confirming, { project, action: 'stop' })} />
     </Row>
+  )
+}
+
+/** Pergunta antes de derrubar o projeto: um clique errado no cabeçalho não pode parar a pilha toda. */
+function ConfirmBar({ project, rows, action }: { project: string; rows: ContainerRow[]; action: 'stop' | 'restart' }) {
+  const count = action === 'stop' ? rows.filter((row) => row.state === 'running').length : rows.length
+  const key = `confirm${action === 'stop' ? 'Stop' : 'Restart'}${count === 1 ? 'One' : 'Many'}` as Key
+  return (
+    <Box background={action === 'stop' ? 'danger' : 'warning'} radius="sm" padding="xs">
+      <Stack gap="xs">
+        <Text size="xs">{t(key, { count, project })}</Text>
+        <Row gap="xs">
+          <Button
+            size="xs"
+            variant="solid"
+            tone={action === 'stop' ? 'danger' : 'warning'}
+            onPress={() => {
+              set(confirming, null)
+              return actProject(project, rows, action)
+            }}
+          >
+            {action === 'stop' ? t('stopAll') : t('restartAll')}
+          </Button>
+          <Button size="xs" variant="ghost" onPress={() => set(confirming, null)}>
+            {t('cancel')}
+          </Button>
+        </Row>
+      </Stack>
+    </Box>
   )
 }
 
 /** Cabeçalho do grupo: recolhe/expande à esquerda, ações do projeto à direita, na mesma linha. */
 function GroupHeader({ id, label, group, open }: { id: string; label: string; group: ContainerRow[]; open: boolean }) {
   const up = group.filter((c) => c.state === 'running').length
+  const pending = read(confirming)
+  const asking = pending?.project === id ? pending.action : null
   return (
-    <Row justify="between" align="center" gap="xs">
-      <Row gap="xs" align="center">
-        <Button size="xs" variant="ghost" icon={open ? 'expand' : 'next'} onPress={() => toggleGroup(id, !open)}>
-          {label}
-        </Button>
-        <Text muted size="xs">{`${up}/${group.length}`}</Text>
+    <Stack gap="xs">
+      <Row justify="between" align="center" gap="xs">
+        <Row gap="xs" align="center">
+          <Button size="xs" variant="ghost" icon={open ? 'expand' : 'next'} onPress={() => toggleGroup(id, !open)}>
+            {label}
+          </Button>
+          <Text muted size="xs">{`${up}/${group.length}`}</Text>
+        </Row>
+        {id === STANDALONE || asking ? null : <ProjectActions project={id} rows={group} />}
       </Row>
-      {id === STANDALONE ? null : <ProjectActions project={id} rows={group} />}
-    </Row>
+      {asking ? <ConfirmBar project={id} rows={group} action={asking} /> : null}
+    </Stack>
   )
 }
 
