@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "docker-containers",
   "name": "Docker Containers",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Docker containers in the Orca sidebar, grouped by Compose project: live status, logs, shell, start/stop/restart, status bar counter and crash notifications.",
   "engines": {
     "orca": ">=1.4.248"
@@ -115,15 +115,15 @@
   "screenshots": [
     {
       "path": "assets/screenshots/grouped.png",
-      "caption": "Containers grouped by Compose project, with ports, status and one-click actions",
+      "caption": "Every state at a glance: unhealthy and restarting containers stand out, stopped ones show their exit code",
       "theme": "dark",
-      "alt": "Orca sidebar panel listing Docker containers grouped by Compose project, with status badges, published ports and start, stop, restart and logs buttons"
+      "alt": "Docker panel with two-line rows: coloured status dots, an unhealthy container in red, a restarting one in amber, a stopped one with its exit code"
     },
     {
       "path": "assets/screenshots/live-status.png",
-      "caption": "Updates instantly when a container starts or stops, even from the terminal",
+      "caption": "Compact rows grouped by Compose project, with the project actions in the group header",
       "theme": "dark",
-      "alt": "The same panel after one container stopped: its badge changes to exited and the active counter drops, without pressing refresh"
+      "alt": "Docker panel with a Compose project header holding start, restart and stop buttons, above healthy containers showing image, uptime and port"
     }
   ]
 }

@@ -4,7 +4,7 @@ See and control your Docker containers without leaving [Orca](https://onorca.dev
 right sidebar lists every container, grouped by Docker Compose project, and updates the moment
 something starts or stops.
 
-![Containers grouped by Compose project](assets/screenshots/grouped.png)
+![Every container state at a glance](assets/screenshots/grouped.png)
 
 ## Features
 
@@ -12,8 +12,8 @@ something starts or stops.
   "Standalone". Projects with running containers come first.
 - **Live.** Listens to `docker events`, so the list updates instantly, even when you start or stop
   something from a terminal. A 30-second refresh is kept as a safety net.
-- **Status at a glance.** State badge, image, published ports and the status text from Docker.
-- **Actions.** Start, stop and restart a container, or a whole Compose project at once.
+- **Status at a glance.** Two compact lines per container: a coloured dot (filled when running, hollow when stopped), the image, a short uptime like `3h` and the published ports. A state word appears only when it matters (`unhealthy`, `restarting`, `paused`, `exited (3)`), and containers that need attention get a tinted row.
+- **Actions.** Start, stop and restart a container, or a whole Compose project at once, with the project buttons in the group header. Click the project name to collapse it.
 - **Logs.** The last 200 lines of any container, right in the panel, or follow them live in an Orca terminal.
 - **Shell.** Open a shell inside a running container in a new Orca terminal (bash if the image has it, otherwise sh).
 - **Details.** Image, command, restart policy, networks and volumes (never environment variables or labels).
@@ -25,7 +25,7 @@ something starts or stops.
 - **Helpful errors.** Tells you when Docker is missing, stopped, or you lack permission, and how to fix it.
 - **English and Portuguese**, following Orca's language.
 
-![The panel after a container stopped](assets/screenshots/live-status.png)
+![A healthy stack with a stopped container](assets/screenshots/live-status.png)
 
 ## Requirements
 
@@ -52,7 +52,7 @@ icon in the right sidebar tabs.
 ## Security
 
 This plugin runs a Node worker with your user's access (`trusted-worker`), which is why Orca asks for
-explicit approval. Version 0.3.0 asks for more than 0.2.0, so Orca asks again when you update. Here
+explicit approval. Version 0.3.0 asked for more than 0.2.0; 0.4.0 asks for nothing new. Here
 is what each permission is used for, and nothing else:
 
 | Permission | Used for |

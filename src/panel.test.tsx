@@ -5,6 +5,8 @@ import type { ContainerRow, ListResult } from './protocol'
 
 const web: ContainerRow = { id: 'a'.repeat(12), name: 'web', image: 'nginx', state: 'running', status: 'Up 1 hour', ports: [{ host: 8080, container: 80 }], project: 'meu-app' }
 const db: ContainerRow = { id: 'b'.repeat(12), name: 'db', image: 'postgres:16', state: 'exited', status: 'Exited (0) 2 days ago', ports: [], project: 'meu-app' }
+const sick: ContainerRow = { id: 'd'.repeat(12), name: 'api', image: 'caddy:2', state: 'running', status: 'Up 2 minutes (unhealthy)', ports: [], project: 'meu-app' }
+const crashed: ContainerRow = { id: 'e'.repeat(12), name: 'job', image: 'busybox', state: 'exited', status: 'Exited (3) About an hour ago', ports: [], project: null }
 const solo: ContainerRow = { id: 'c'.repeat(12), name: 'solo', image: 'redis', state: 'running', status: 'Up 5 minutes', ports: [], project: null }
 
 /** Há, em qualquer parte da árvore desenhada (children, title, label...), um valor de texto exatamente igual. */
@@ -19,8 +21,10 @@ function hostWith(list: () => ListResult, extra: Record<string, unknown> = {}) {
 test('agrupa por projeto, mostra o contador e os avulsos', async () => {
   const view = await mount(panel, { host: hostWith(() => ({ ok: true, containers: [web, db, solo], at: 1 })) })
   assert.ok(shows(view, '2/3 active'))
-  assert.ok(shows(view, 'meu-app (1/2)'))
-  assert.ok(shows(view, 'Standalone (1/1)'))
+  assert.ok(shows(view, 'meu-app'))
+  assert.ok(shows(view, '1/2'))
+  assert.ok(shows(view, 'Standalone'))
+  assert.ok(shows(view, '1/1'))
   assert.deepEqual(view.errors, [])
   await view.unmount()
 })
@@ -53,10 +57,10 @@ test('abre a porta publicada no navegador após um clique', async () => {
 test('recarrega a lista quando o worker avisa que o docker mudou', async () => {
   let containers = [web]
   const view = await mount(panel, { host: hostWith(() => ({ ok: true, containers, at: 1 })) })
-  assert.ok(shows(view, 'meu-app (1/1)'))
+  assert.ok(shows(view, '1/1'))
   containers = [web, db]
   await view.post('containers.changed', { at: 2 })
-  assert.ok(shows(view, 'meu-app (1/2)'))
+  assert.ok(shows(view, '1/2'))
   await view.unmount()
 })
 
@@ -134,5 +138,37 @@ test('usa o intervalo das configurações sem quebrar com valor inválido', asyn
     host: mockHost({ settings: { pollSeconds: 'abc' as never }, requests: { 'containers.list': () => ({ ok: true, containers: [web], at: 1 }) } as never })
   })
   assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
+
+test('mostra estado em palavras só quando importa e o tempo de forma compacta', async () => {
+  const view = await mount(panel, { host: hostWith(() => ({ ok: true, containers: [web, sick, crashed], at: 1 })) })
+  assert.ok(shows(view, '· unhealthy'))
+  assert.ok(shows(view, '· exited (3)'))
+  assert.ok(shows(view, '· 1h ago'))
+  assert.ok(shows(view, '· 2m'))
+  assert.ok(shows(view, '●'))
+  assert.ok(shows(view, '○'))
+  assert.equal(shows(view, 'running'), false)
+  assert.equal(shows(view, 'Up 2 minutes (unhealthy)'), false)
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
+
+test('recolher o grupo esconde os containers e mantém as ações do projeto no cabeçalho', async () => {
+  const view = await mount(panel, { host: hostWith(() => ({ ok: true, containers: [web, db, solo], at: 1 })) })
+  assert.ok(shows(view, 'Stop web'))
+  await view.press({ text: 'meu-app' })
+  assert.equal(shows(view, 'Stop web'), false)
+  assert.ok(shows(view, 'Restart all'))
+  assert.ok(shows(view, 'Stop solo'))
+  await view.press({ text: 'meu-app' })
+  assert.ok(shows(view, 'Stop web'))
+  await view.unmount()
+})
+
+test('o grupo de avulsos não tem ações de projeto', async () => {
+  const view = await mount(panel, { host: hostWith(() => ({ ok: true, containers: [solo], at: 1 })) })
+  assert.equal(shows(view, 'Stop all'), false)
   await view.unmount()
 })

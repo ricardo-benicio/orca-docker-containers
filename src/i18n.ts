@@ -65,7 +65,15 @@ const en = {
   notifUnhealthyTitle: 'Container is unhealthy',
   notifUnhealthyBody: '{name} failed its health check',
   summaryTitle: '{up} of {total} containers running',
-  summaryEmpty: 'No containers'
+  summaryEmpty: 'No containers',
+  stateUnhealthy: 'unhealthy',
+  stateStarting: 'starting',
+  stateRestarting: 'restarting',
+  statePaused: 'paused',
+  stateExited: 'exited',
+  stateCreated: 'created',
+  stateDead: 'dead',
+  ago: '{time} ago'
 }
 
 export type Key = keyof typeof en
@@ -136,7 +144,15 @@ const pt: Record<Key, string> = {
   notifUnhealthyTitle: 'Container não saudável',
   notifUnhealthyBody: '{name} falhou no health check',
   summaryTitle: '{up} de {total} containers em execução',
-  summaryEmpty: 'Nenhum container'
+  summaryEmpty: 'Nenhum container',
+  stateUnhealthy: 'não saudável',
+  stateStarting: 'iniciando',
+  stateRestarting: 'reiniciando',
+  statePaused: 'pausado',
+  stateExited: 'parado',
+  stateCreated: 'criado',
+  stateDead: 'morto',
+  ago: 'há {time}'
 }
 
 export function translate(locale: string | undefined, key: Key, vars: Record<string, string | number> = {}): string {

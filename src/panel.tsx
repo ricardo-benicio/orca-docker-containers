@@ -6,7 +6,6 @@ import {
   Button,
   Callout,
   CodeView,
-  Collapsible,
   derived,
   EmptyState,
   env,
@@ -26,9 +25,9 @@ import {
   Switch,
   Text,
   update,
-  type PanelContext,
-  type Tone
+  type PanelContext
 } from 'orca'
+import { lookOf, type Look } from './format'
 import { translate, type Key } from './i18n'
 import type { Action, ContainerInfo, ContainerRow, DockerErrorCode, TerminalKind } from './protocol'
 
@@ -64,13 +63,6 @@ const groups = derived(() => {
   const up = (rows: ContainerRow[]) => rows.filter((c) => c.state === 'running').length
   return [...byProject.entries()].sort(([a, rowsA], [b, rowsB]) => up(rowsB) - up(rowsA) || a.localeCompare(b))
 })
-
-function stateTone(state: string): Tone {
-  if (state === 'running') return 'success'
-  if (state === 'restarting' || state === 'paused') return 'warning'
-  if (state === 'dead') return 'danger'
-  return 'neutral'
-}
 
 function errorText(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
@@ -176,37 +168,54 @@ export function setup(ctx: PanelContext): void {
   ctx.subscriptions.push({ dispose: () => timer && clearInterval(timer) })
 }
 
+function stateKey(word: NonNullable<Look['word']>): Key {
+  return `state${word[0]!.toUpperCase()}${word.slice(1)}` as Key
+}
+
 function ContainerItem({ row }: { row: ContainerRow }) {
   const working = read(busy).includes(row.id)
   const running = row.state === 'running'
+  const look = lookOf(row)
+  const wordText = look.word ? (look.code !== null ? `${t(stateKey(look.word))} (${look.code})` : t(stateKey(look.word))) : null
+  const ageText = look.age && (look.word === 'exited' || look.word === 'restarting') ? t('ago', { time: look.age }) : look.age
   return (
-    <Stack gap="xs">
-      <Row justify="between" align="center" gap="xs">
-        <Row gap="xs" align="center">
-          <Badge tone={stateTone(row.state)}>{row.state}</Badge>
-          <Text weight="medium" truncate>
-            {row.name}
+    <Box background={look.problem ?? 'none'} radius="sm" paddingX="xs" paddingY="xs">
+      <Stack gap="none">
+        <Row justify="between" align="center" gap="xs">
+          <Row gap="xs" align="center">
+            <Text tone={look.tone}>{look.filled ? '●' : '○'}</Text>
+            <Text weight="medium" truncate>
+              {row.name}
+            </Text>
+          </Row>
+          <Row gap="none">
+            <IconButton icon="info" label={t('detailsOf', { name: row.name })} tooltip={t('details')} size="xs" variant="ghost" onPress={() => showDetail(row)} />
+            <IconButton icon="file-text" label={t('logsOf', { name: row.name })} tooltip={t('logs')} size="xs" variant="ghost" onPress={() => showLogs(row)} />
+            <IconButton icon="refresh" label={t('restartName', { name: row.name })} tooltip={t('restart')} size="xs" variant="ghost" disabled={working || !running} onPress={() => act(row, 'restart')} />
+            {running ? (
+              <IconButton icon="stop" label={t('stopName', { name: row.name })} tooltip={t('stop')} size="xs" variant="ghost" disabled={working} onPress={() => act(row, 'stop')} />
+            ) : (
+              <IconButton icon="play" label={t('startName', { name: row.name })} tooltip={t('start')} size="xs" variant="ghost" disabled={working} onPress={() => act(row, 'start')} />
+            )}
+          </Row>
+        </Row>
+        <Row gap="xs" align="center" wrap>
+          <Text muted size="xs" truncate>
+            {row.image}
           </Text>
-        </Row>
-        <Row gap="none">
-          <IconButton icon="info" label={t('detailsOf', { name: row.name })} tooltip={t('details')} size="xs" variant="ghost" onPress={() => showDetail(row)} />
-          <IconButton icon="file-text" label={t('logsOf', { name: row.name })} tooltip={t('logs')} size="xs" variant="ghost" onPress={() => showLogs(row)} />
-          <IconButton icon="refresh" label={t('restartName', { name: row.name })} tooltip={t('restart')} size="xs" variant="ghost" disabled={working || !running} onPress={() => act(row, 'restart')} />
-          {running ? (
-            <IconButton icon="stop" label={t('stopName', { name: row.name })} tooltip={t('stop')} size="xs" variant="ghost" tone="danger" disabled={working} onPress={() => act(row, 'stop')} />
-          ) : (
-            <IconButton icon="play" label={t('startName', { name: row.name })} tooltip={t('start')} size="xs" variant="ghost" tone="success" disabled={working} onPress={() => act(row, 'start')} />
-          )}
-        </Row>
-      </Row>
-      <Text muted size="xs" truncate>
-        {row.image}
-      </Text>
-      {row.ports.length > 0 ? (
-        <Row gap="xs" wrap>
-          {row.ports.map((port) => (
+          {wordText ? (
+            <Text size="xs" tone={look.tone === 'neutral' ? undefined : look.tone} muted={look.tone === 'neutral'}>
+              {`· ${wordText}`}
+            </Text>
+          ) : null}
+          {ageText ? (
+            <Text muted size="xs">
+              {`· ${ageText}`}
+            </Text>
+          ) : null}
+          {row.ports.map((port, index) => (
             <Row key={`${port.host}:${port.container}`} gap="none" align="center">
-              <Text muted size="xs">{`${port.host}→${port.container}`}</Text>
+              <Text muted size="xs">{`${index === 0 && (wordText || ageText) ? '· ' : ''}${port.host}→${port.container}`}</Text>
               <IconButton
                 icon="open-external"
                 label={t('openPort', { port: port.host })}
@@ -218,11 +227,8 @@ function ContainerItem({ row }: { row: ContainerRow }) {
             </Row>
           ))}
         </Row>
-      ) : null}
-      <Text muted size="xs" truncate>
-        {row.status}
-      </Text>
-    </Stack>
+      </Stack>
+    </Box>
   )
 }
 
@@ -269,10 +275,26 @@ function ProjectActions({ project, rows }: { project: string; rows: ContainerRow
   const anyUp = rows.some((row) => row.state === 'running')
   const anyDown = rows.some((row) => row.state !== 'running')
   return (
-    <Row gap="none" justify="end">
-      <IconButton icon="play" label={t('startAll')} tooltip={t('startAll')} size="xs" variant="ghost" tone="success" disabled={working || !anyDown} onPress={() => actProject(project, rows, 'start')} />
+    <Row gap="none">
+      <IconButton icon="play" label={t('startAll')} tooltip={t('startAll')} size="xs" variant="ghost" disabled={working || !anyDown} onPress={() => actProject(project, rows, 'start')} />
       <IconButton icon="refresh" label={t('restartAll')} tooltip={t('restartAll')} size="xs" variant="ghost" disabled={working || !anyUp} onPress={() => actProject(project, rows, 'restart')} />
-      <IconButton icon="stop" label={t('stopAll')} tooltip={t('stopAll')} size="xs" variant="ghost" tone="danger" disabled={working || !anyUp} onPress={() => actProject(project, rows, 'stop')} />
+      <IconButton icon="stop" label={t('stopAll')} tooltip={t('stopAll')} size="xs" variant="ghost" disabled={working || !anyUp} onPress={() => actProject(project, rows, 'stop')} />
+    </Row>
+  )
+}
+
+/** Cabeçalho do grupo: recolhe/expande à esquerda, ações do projeto à direita, na mesma linha. */
+function GroupHeader({ id, label, group, open }: { id: string; label: string; group: ContainerRow[]; open: boolean }) {
+  const up = group.filter((c) => c.state === 'running').length
+  return (
+    <Row justify="between" align="center" gap="xs">
+      <Row gap="xs" align="center">
+        <Button size="xs" variant="ghost" icon={open ? 'expand' : 'next'} onPress={() => toggleGroup(id, !open)}>
+          {label}
+        </Button>
+        <Text muted size="xs">{`${up}/${group.length}`}</Text>
+      </Row>
+      {id === STANDALONE ? null : <ProjectActions project={id} rows={group} />}
     </Row>
   )
 }
@@ -342,20 +364,12 @@ export default function Panel() {
 
         {rows.map(([key, group]) => {
           const label = key === STANDALONE ? t('standalone') : key
+          const open = !closed.includes(key)
           return (
-            <Collapsible
-              key={key}
-              title={`${label} (${group.filter((c) => c.state === 'running').length}/${group.length})`}
-              open={!closed.includes(key)}
-              onChange={(open) => toggleGroup(key, open)}
-            >
-              <Stack gap="sm">
-                {key === STANDALONE ? null : <ProjectActions project={key} rows={group} />}
-                {group.map((row) => (
-                  <ContainerItem key={row.id} row={row} />
-                ))}
-              </Stack>
-            </Collapsible>
+            <Stack key={key} gap="xs">
+              <GroupHeader id={key} label={label} group={group} open={open} />
+              {open ? group.map((row) => <ContainerItem key={row.id} row={row} />) : null}
+            </Stack>
           )
         })}
 
