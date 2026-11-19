@@ -79,3 +79,60 @@ test('o filtro e o interruptor reduzem a lista', async () => {
   assert.equal(shows(view, 'web'), false)
   await view.unmount()
 })
+
+const info = { id: 'a'.repeat(12), name: 'web', image: 'nginx', created: '2026-11-19T18:00:00Z', command: 'nginx -g daemon off;', restart: 'unless-stopped', networks: [{ name: 'meu-app_default', ip: '172.18.0.2' }], mounts: [{ type: 'volume', source: 'data', destination: '/data', rw: false }] }
+
+test('mostra rede, volumes e comando nos detalhes, sem segredos', async () => {
+  const view = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: [web], at: 1 }), { 'containers.inspect': () => ({ ok: true, info }) })
+  })
+  await view.press({ label: 'Details of web' })
+  assert.ok(shows(view, 'meu-app_default (172.18.0.2)'))
+  assert.ok(shows(view, 'data → /data (ro)'))
+  assert.ok(shows(view, 'unless-stopped'))
+  await view.press({ label: 'Close details' })
+  assert.equal(shows(view, 'unless-stopped'), false)
+  await view.unmount()
+})
+
+test('abre shell e logs em terminal pelo worker, só com o container ativo', async () => {
+  const seen: unknown[] = []
+  const view = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: [web, db], at: 1 }), {
+      'containers.inspect': () => ({ ok: true, info }),
+      'containers.terminal': (input: unknown) => (seen.push(input), { ok: true })
+    })
+  })
+  await view.press({ label: 'Details of web' })
+  await view.press({ text: 'Open shell' })
+  await view.press({ text: 'Follow logs in terminal' })
+  assert.deepEqual(seen, [
+    { id: web.id, kind: 'shell', name: 'web' },
+    { id: web.id, kind: 'logs', name: 'web' }
+  ])
+  await view.press({ label: 'Details of db' })
+  assert.equal(view.find({ text: 'Open shell' }), null)
+  assert.ok(view.find({ text: 'Follow logs in terminal' }))
+  await view.unmount()
+})
+
+test('avisa quando o terminal não pôde abrir', async () => {
+  const view = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: [web], at: 1 }), {
+      'containers.inspect': () => ({ ok: true, info }),
+      'containers.terminal': () => ({ ok: false, code: 'no_workspace', error: 'Focus a workspace first' })
+    })
+  })
+  await view.press({ label: 'Details of web' })
+  await view.press({ text: 'Open shell' })
+  assert.ok(shows(view, 'Focus a workspace first'))
+  await view.unmount()
+})
+
+test('usa o intervalo das configurações sem quebrar com valor inválido', async () => {
+  const view = await mount(panel, {
+    host: mockHost({ settings: { pollSeconds: 'abc' as never }, requests: { 'containers.list': () => ({ ok: true, containers: [web], at: 1 }) } as never })
+  })
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})

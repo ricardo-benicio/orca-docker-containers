@@ -3,6 +3,12 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   classifyError,
+  configureDocker,
+  dockerArgs,
+  dockerCommandLine,
+  followLogsCommand,
+  parseInspect,
+  shellCommand,
   containerAction,
   isValidAction,
   isValidId,
@@ -68,4 +74,59 @@ test('lista, age em um container e em todo um projeto pelo runner', async () => 
   } finally {
     setRunner()
   }
+})
+
+test('monta linhas de terminal seguras, com binário e contexto configurados', () => {
+  try {
+    assert.equal(followLogsCommand('abc123def456'), 'docker logs -f --tail 200 abc123def456')
+    assert.equal(shellCommand('abc123def456'), "docker exec -it abc123def456 sh -c 'command -v bash >/dev/null 2>&1 && exec bash || exec sh'")
+    configureDocker({ path: '/opt/bin/docker', context: 'colima' })
+    assert.equal(dockerCommandLine(['ps']), '/opt/bin/docker --context colima ps')
+    assert.deepEqual(dockerArgs(['ps']), ['--context', 'colima', 'ps'])
+    configureDocker({ path: 'docker; rm -rf ~', context: 'x; id' })
+    assert.equal(dockerCommandLine(['ps']), 'docker ps')
+  } finally {
+    configureDocker({ path: 'docker', context: '' })
+  }
+})
+
+test('o runner recebe o contexto configurado', async () => {
+  const calls: string[][] = []
+  setRunner(async (args) => (calls.push(args), ''))
+  try {
+    await containerAction('abc123def456', 'stop')
+    assert.deepEqual(calls.at(-1), ['stop', 'abc123def456'])
+  } finally {
+    setRunner()
+  }
+})
+
+test('lê do docker inspect só os campos seguros, sem variáveis de ambiente', () => {
+  const raw = JSON.stringify([
+    {
+      Id: 'f'.repeat(64),
+      Name: '/shop-db-1',
+      Created: '2026-11-19T18:00:00.123Z',
+      Path: 'postgres',
+      Args: ['-c', 'fsync=off'],
+      Config: { Image: 'postgres:16', Env: ['POSTGRES_PASSWORD=segredo'], Labels: { token: 'segredo' } },
+      HostConfig: { RestartPolicy: { Name: 'unless-stopped' } },
+      NetworkSettings: { Networks: { shop_default: { IPAddress: '172.18.0.2' } } },
+      Mounts: [{ Type: 'volume', Name: 'pgdata', Source: '/var/lib/docker/volumes/pgdata/_data', Destination: '/var/lib/postgresql/data', RW: true }]
+    }
+  ])
+  const info = parseInspect(raw)
+  assert.deepEqual(info, {
+    id: 'ffffffffffff',
+    name: 'shop-db-1',
+    image: 'postgres:16',
+    created: '2026-11-19T18:00:00.123Z',
+    command: 'postgres -c fsync=off',
+    restart: 'unless-stopped',
+    networks: [{ name: 'shop_default', ip: '172.18.0.2' }],
+    mounts: [{ type: 'volume', source: 'pgdata', destination: '/var/lib/postgresql/data', rw: true }]
+  })
+  assert.equal(JSON.stringify(info).includes('segredo'), false)
+  assert.equal(parseInspect('não é json'), null)
+  assert.equal(parseInspect('[]'), null)
 })

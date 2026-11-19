@@ -14,9 +14,14 @@ something starts or stops.
   something from a terminal. A 30-second refresh is kept as a safety net.
 - **Status at a glance.** State badge, image, published ports and the status text from Docker.
 - **Actions.** Start, stop and restart a container, or a whole Compose project at once.
-- **Logs.** The last 200 lines of any container, right in the panel.
+- **Logs.** The last 200 lines of any container, right in the panel, or follow them live in an Orca terminal.
+- **Shell.** Open a shell inside a running container in a new Orca terminal (bash if the image has it, otherwise sh).
+- **Details.** Image, command, restart policy, networks and volumes (never environment variables or labels).
+- **Status bar.** A `running/total` counter you can click to toggle the sidebar, plus a `Docker: Show running containers summary` command in the palette and the `Mod+Alt+D` shortcut.
+- **Notifications.** A desktop notification when a container crashes (non-zero exit), runs out of memory or turns unhealthy. Normal stops are ignored and repeats are throttled.
 - **Open a port.** One click opens `http://localhost:<port>` in your browser.
 - **Filter.** Search by name, image, project or port, or show running containers only.
+- **Settings.** Docker binary, Docker context (for example Colima or a remote host), refresh interval, notifications and status bar can all be changed in Settings → Plugins.
 - **Helpful errors.** Tells you when Docker is missing, stopped, or you lack permission, and how to fix it.
 - **English and Portuguese**, following Orca's language.
 
@@ -47,16 +52,30 @@ icon in the right sidebar tabs.
 ## Security
 
 This plugin runs a Node worker with your user's access (`trusted-worker`), which is why Orca asks for
-explicit approval. What it does, in full:
+explicit approval. Version 0.3.0 asks for more than 0.2.0, so Orca asks again when you update. Here
+is what each permission is used for, and nothing else:
 
-- Runs only `docker ps`, `docker logs`, `docker events` and `docker start|stop|restart <id…>`,
+| Permission | Used for |
+| --- | --- |
+| Run its own code | Talking to the `docker` CLI and watching `docker events` |
+| `terminal:send` | Opening one terminal in your focused workspace when you press **Open shell** or **Follow logs**. Orca describes this permission broadly (it also covers typing into terminals); the plugin only calls `terminal.create`. |
+| `workspace:read` | Reading the id of the focused workspace, to know where to open that terminal. Nothing else about your workspaces is read. |
+| `notifications:show` | The crash, out-of-memory and unhealthy notifications |
+| `settings:own` | Reading this plugin's own settings |
+| `storage:own` | Remembering the panel's filter and collapsed groups |
+
+What the worker runs:
+
+- `docker ps`, `docker inspect`, `docker logs`, `docker events` and `docker start|stop|restart <id…>`,
   through `execFile` (no shell).
-- Rejects any container id that is not hexadecimal, any project name that is not a valid Compose
-  name, and any action outside start, stop and restart, before calling Docker.
-- Never deletes containers, images or volumes.
-- Makes no network requests. The only link it opens is `http://localhost:<port>` for a port you
+- In a terminal, only `docker exec -it <id> sh -c '…bash or sh…'` and `docker logs -f --tail 200 <id>`.
+  The id is checked to be hexadecimal, and the docker command and context you configure are checked
+  to contain only letters, digits and `./_+@-`, so nothing can be injected into the terminal line.
+- It rejects invalid ids, project names and actions before calling Docker.
+- It never deletes containers, images or volumes, and never sends environment variables or labels
+  to the panel.
+- It makes no network requests. The only link it opens is `http://localhost:<port>` for a port you
   click, in your browser.
-- Stores nothing except the panel's own preferences (filter text, collapsed groups).
 
 ## Development
 
@@ -65,7 +84,7 @@ orca plugin validate .
 orca plugin test .          # parsers, worker and panel tests
 orca plugin check .         # renders the panel in four states
 orca plugin dev watch . --check
-node --test src/docker.test.ts src/i18n.test.ts   # the pure tests, no Orca needed (what CI runs)
+node --test src/docker.test.ts src/i18n.test.ts src/config.test.ts src/alerts.test.ts   # the pure tests, no Orca needed (what CI runs)
 ```
 
 ## Releasing

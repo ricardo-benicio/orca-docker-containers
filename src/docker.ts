@@ -1,6 +1,7 @@
 // Funções puras e chamadas ao CLI do Docker. Sem shell: execFile com argumentos fixos.
 import { execFile } from 'node:child_process'
-import type { Action, ContainerRow, DockerErrorCode, PublishedPort } from './protocol'
+import { DEFAULTS, isSafeContext, isSafePath } from './config.ts'
+import type { Action, ContainerInfo, ContainerRow, DockerErrorCode, PublishedPort } from './protocol'
 
 const ID_PATTERN = /^[a-f0-9]{12,64}$/
 const PROJECT_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/
@@ -87,11 +88,42 @@ export function classifyError(code: unknown, stderr: string): DockerErrorCode {
   return 'unknown'
 }
 
+let bin = DEFAULTS.dockerPath
+let context = DEFAULTS.dockerContext
+
+/** Aplica o binário e o contexto das configurações; valores inseguros voltam ao padrão. */
+export function configureDocker(options: { path: string; context: string }): void {
+  bin = isSafePath(options.path) ? options.path : DEFAULTS.dockerPath
+  context = options.context && isSafeContext(options.context) ? options.context : ''
+}
+
+export function dockerBinary(): string {
+  return bin
+}
+
+/** Argumentos reais da chamada, com `--context` quando configurado. */
+export function dockerArgs(args: string[]): string[] {
+  return context ? ['--context', context, ...args] : args
+}
+
+/** Linha de comando para colar num terminal. O binário e o contexto já são validados; os ids são hex. */
+export function dockerCommandLine(args: string[]): string {
+  return [bin, ...dockerArgs(args)].join(' ')
+}
+
+export function shellCommand(id: string): string {
+  return dockerCommandLine(['exec', '-it', id, 'sh', '-c', "'command -v bash >/dev/null 2>&1 && exec bash || exec sh'"])
+}
+
+export function followLogsCommand(id: string): string {
+  return dockerCommandLine(['logs', '-f', '--tail', '200', id])
+}
+
 export type Runner = (args: string[], signal?: AbortSignal) => Promise<string>
 
 const defaultRunner: Runner = (args, signal) =>
   new Promise((resolve, reject) => {
-    execFile('docker', args, { maxBuffer: 4 * 1024 * 1024, timeout: 20_000, signal }, (error, stdout, stderr) => {
+    execFile(bin, dockerArgs(args), { maxBuffer: 4 * 1024 * 1024, timeout: 20_000, signal }, (error, stdout, stderr) => {
       if (error) {
         const detail = stderr.trim() || error.message
         reject(new DockerError(classifyError((error as NodeJS.ErrnoException).code, detail), detail))
@@ -130,4 +162,45 @@ export async function projectAction(project: string, action: Action, signal?: Ab
 
 export async function containerLogs(id: string, tail: number, signal?: AbortSignal): Promise<string> {
   return runner(['logs', '--tail', String(tail), id], signal)
+}
+
+/** Lê só os campos seguros de `docker inspect`; o resto (env, labels) nunca sai do worker. */
+export function parseInspect(stdout: string): ContainerInfo | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(stdout)
+  } catch {
+    return null
+  }
+  const raw = (Array.isArray(parsed) ? parsed[0] : parsed) as Record<string, any> | undefined
+  if (!raw || typeof raw.Id !== 'string') return null
+  const text = (value: unknown): string => (typeof value === 'string' ? value : '')
+  const networks = Object.entries((raw.NetworkSettings?.Networks ?? {}) as Record<string, any>).map(([name, net]) => ({
+    name,
+    ip: text(net?.IPAddress)
+  }))
+  const mounts = (Array.isArray(raw.Mounts) ? raw.Mounts : []).map((m: Record<string, unknown>) => ({
+    type: text(m.Type),
+    source: text(m.Name) || text(m.Source),
+    destination: text(m.Destination),
+    rw: m.RW !== false
+  }))
+  const args = Array.isArray(raw.Args) ? raw.Args.filter((a: unknown) => typeof a === 'string') : []
+  return {
+    id: raw.Id.slice(0, 12),
+    name: text(raw.Name).replace(/^\//, ''),
+    image: text(raw.Config?.Image),
+    created: text(raw.Created),
+    // Só o executável e os argumentos que a imagem declarou: nada de ambiente.
+    command: [text(raw.Path), ...args].filter(Boolean).join(' '),
+    restart: text(raw.HostConfig?.RestartPolicy?.Name) || 'no',
+    networks,
+    mounts
+  }
+}
+
+export async function inspectContainer(id: string, signal?: AbortSignal): Promise<ContainerInfo> {
+  const info = parseInspect(await runner(['inspect', id], signal))
+  if (!info) throw new DockerError('unknown', 'could not read docker inspect output')
+  return info
 }

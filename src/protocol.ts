@@ -25,6 +25,20 @@ export type ListResult =
 
 export type Action = 'start' | 'stop' | 'restart'
 
+/** Detalhes de um container. Nunca inclui variáveis de ambiente nem labels, que podem ter segredos. */
+export type ContainerInfo = {
+  id: string
+  name: string
+  image: string
+  created: string
+  command: string
+  restart: string
+  networks: { name: string; ip: string }[]
+  mounts: { type: string; source: string; destination: string; rw: boolean }[]
+}
+
+export type TerminalKind = 'shell' | 'logs'
+
 declare module 'orca' {
   interface PluginRequests {
     /** Lista todos os containers (inclusive parados) e liga o monitor de eventos do Docker. */
@@ -38,6 +52,16 @@ declare module 'orca' {
     'project.action': {
       input: { project: string; action: Action }
       output: { ok: boolean; count: number; error?: string }
+    }
+    /** Rede, volumes, comando e política de restart de um container. */
+    'containers.inspect': {
+      input: { id: string }
+      output: { ok: true; info: ContainerInfo } | { ok: false; error: string }
+    }
+    /** Abre um terminal do Orca no workspace em foco: shell dentro do container ou logs em tempo real. */
+    'containers.terminal': {
+      input: { id: string; kind: TerminalKind; name?: string }
+      output: { ok: boolean; code?: 'no_workspace' | 'failed'; error?: string }
     }
     /** Últimas linhas de log de um container. */
     'containers.logs': {

@@ -3,6 +3,7 @@ import {
   atom,
   Badge,
   Box,
+  Button,
   Callout,
   CodeView,
   Collapsible,
@@ -12,11 +13,13 @@ import {
   Heading,
   IconButton,
   Input,
+  KeyValue,
   plugin,
   read,
   RelativeTime,
   Row,
   set,
+  settings,
   shell,
   Skeleton,
   Stack,
@@ -27,10 +30,10 @@ import {
   type Tone
 } from 'orca'
 import { translate, type Key } from './i18n'
-import type { Action, ContainerRow, DockerErrorCode } from './protocol'
+import type { Action, ContainerInfo, ContainerRow, DockerErrorCode, TerminalKind } from './protocol'
 
-/** Rede de segurança: os eventos do Docker já atualizam a lista na hora. */
-const FALLBACK_POLL_MS = 30_000
+/** Rede de segurança: os eventos do Docker já atualizam a lista na hora. Ajustável nas configurações. */
+const DEFAULT_POLL_SECONDS = 30
 const STANDALONE = '__standalone'
 
 const containers = atom<ContainerRow[] | null>(null)
@@ -39,6 +42,7 @@ const updatedAt = atom<number | null>(null)
 const busy = atom<readonly string[]>([])
 const logs = atom<{ id: string; name: string; text: string } | null>(null)
 const notice = atom<string | null>(null)
+const detail = atom<{ row: ContainerRow; info: ContainerInfo | null; error: string | null } | null>(null)
 
 const query = atom('query', '', { persist: 'plugin' })
 const onlyRunning = atom('onlyRunning', false, { persist: 'plugin' })
@@ -126,6 +130,25 @@ async function showLogs(row: ContainerRow): Promise<void> {
   }
 }
 
+async function showDetail(row: ContainerRow): Promise<void> {
+  set(detail, { row, info: null, error: null })
+  try {
+    const result = await plugin.request('containers.inspect', { id: row.id })
+    set(detail, result.ok ? { row, info: result.info, error: null } : { row, info: null, error: result.error })
+  } catch (cause) {
+    set(detail, { row, info: null, error: errorText(cause) })
+  }
+}
+
+async function openTerminal(row: ContainerRow, kind: TerminalKind): Promise<void> {
+  try {
+    const result = await plugin.request('containers.terminal', { id: row.id, kind, name: row.name })
+    set(notice, result.ok ? null : (result.error ?? t('terminalFailed')))
+  } catch (cause) {
+    set(notice, errorText(cause))
+  }
+}
+
 function toggleGroup(key: string, open: boolean): void {
   update(collapsed, (keys) => (open ? keys.filter((k) => k !== key) : [...keys, key]))
 }
@@ -134,10 +157,23 @@ function toggleGroup(key: string, open: boolean): void {
 export function setup(ctx: PanelContext): void {
   void refresh()
   ctx.subscriptions.push(plugin.on('containers.changed', () => void refresh()))
-  const timer = setInterval(() => {
-    if (read(ctx.visible)) void refresh()
-  }, FALLBACK_POLL_MS)
-  ctx.subscriptions.push({ dispose: () => clearInterval(timer) })
+  let timer: ReturnType<typeof setInterval> | null = null
+  const arm = async (): Promise<void> => {
+    if (timer) clearInterval(timer)
+    let seconds = DEFAULT_POLL_SECONDS
+    try {
+      const value = await settings.get('pollSeconds')
+      if (typeof value === 'number' && Number.isFinite(value)) seconds = Math.min(Math.max(value, 10), 300)
+    } catch {
+      // Sem configurações: usa o padrão.
+    }
+    timer = setInterval(() => {
+      if (read(ctx.visible)) void refresh()
+    }, seconds * 1000)
+  }
+  void arm()
+  ctx.subscriptions.push(settings.onDidChange(() => void arm()))
+  ctx.subscriptions.push({ dispose: () => timer && clearInterval(timer) })
 }
 
 function ContainerItem({ row }: { row: ContainerRow }) {
@@ -153,6 +189,7 @@ function ContainerItem({ row }: { row: ContainerRow }) {
           </Text>
         </Row>
         <Row gap="none">
+          <IconButton icon="info" label={t('detailsOf', { name: row.name })} tooltip={t('details')} size="xs" variant="ghost" onPress={() => showDetail(row)} />
           <IconButton icon="file-text" label={t('logsOf', { name: row.name })} tooltip={t('logs')} size="xs" variant="ghost" onPress={() => showLogs(row)} />
           <IconButton icon="refresh" label={t('restartName', { name: row.name })} tooltip={t('restart')} size="xs" variant="ghost" disabled={working || !running} onPress={() => act(row, 'restart')} />
           {running ? (
@@ -189,6 +226,44 @@ function ContainerItem({ row }: { row: ContainerRow }) {
   )
 }
 
+function DetailView({ view }: { view: { row: ContainerRow; info: ContainerInfo | null; error: string | null } }) {
+  const { row, info, error } = view
+  const none = t('detailNone')
+  const items = info
+    ? [
+        { label: t('detailId'), value: info.id, code: true },
+        { label: t('detailImage'), value: info.image || none, code: true },
+        { label: t('detailCreated'), value: info.created ? info.created.slice(0, 19).replace('T', ' ') + ' UTC' : none },
+        { label: t('detailCommand'), value: info.command || none, code: true },
+        { label: t('detailRestart'), value: info.restart },
+        { label: t('detailNetworks'), value: info.networks.length ? info.networks.map((n) => (n.ip ? `${n.name} (${n.ip})` : n.name)).join(', ') : none },
+        ...(info.mounts.length
+          ? info.mounts.map((m, i) => ({
+              label: i === 0 ? t('detailVolumes') : '',
+              value: `${m.source || m.type} → ${m.destination}${m.rw ? '' : ' (ro)'}`,
+              code: true
+            }))
+          : [{ label: t('detailVolumes'), value: none }])
+      ]
+    : []
+  return (
+    <Stack gap="xs">
+      <Row justify="between" align="center">
+        <Text weight="semibold" truncate>{row.name}</Text>
+        <IconButton icon="close" label={t('closeDetails')} size="xs" variant="ghost" onPress={() => set(detail, null)} />
+      </Row>
+      {error ? <Text size="xs" tone="danger">{error}</Text> : null}
+      {info ? <KeyValue items={items} /> : error ? null : <Skeleton shape="text" lines={4} label={t('loadingDetails')} />}
+      <Row gap="xs" wrap>
+        {row.state === 'running' ? (
+          <Button size="xs" variant="outline" icon="terminal" onPress={() => openTerminal(row, 'shell')}>{t('openShell')}</Button>
+        ) : null}
+        <Button size="xs" variant="outline" icon="terminal" onPress={() => openTerminal(row, 'logs')}>{`${t('followLogs')} ${t('inTerminal')}`}</Button>
+      </Row>
+    </Stack>
+  )
+}
+
 function ProjectActions({ project, rows }: { project: string; rows: ContainerRow[] }) {
   const working = rows.some((row) => read(busy).includes(row.id))
   const anyUp = rows.some((row) => row.state === 'running')
@@ -207,6 +282,7 @@ export default function Panel() {
   const problem = read(failure)
   const stamp = read(updatedAt)
   const log = read(logs)
+  const detailView = read(detail)
   const message = read(notice)
   const closed = read(collapsed)
   const rows = read(groups)
@@ -242,6 +318,8 @@ export default function Panel() {
             <Text size="xs">{message}</Text>
           </Callout>
         ) : null}
+
+        {detailView ? <DetailView view={detailView} /> : null}
 
         {log ? (
           <Stack gap="xs">

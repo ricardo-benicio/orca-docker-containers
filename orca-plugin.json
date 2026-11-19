@@ -2,10 +2,10 @@
   "manifestVersion": 2,
   "id": "docker-containers",
   "name": "Docker Containers",
-  "version": "0.2.0",
-  "description": "Docker containers in the Orca right sidebar, grouped by Compose project: live status, ports, logs, start, stop and restart.",
+  "version": "0.3.0",
+  "description": "Docker containers in the Orca sidebar, grouped by Compose project: live status, logs, shell, start/stop/restart, status bar counter and crash notifications.",
   "engines": {
-    "orca": ">=1.4.246"
+    "orca": ">=1.4.248"
   },
   "execution": "trusted-worker",
   "pluginApi": 1,
@@ -19,11 +19,89 @@
         "entry": "src/panel.tsx",
         "ui": "components"
       }
+    ],
+    "commands": [
+      {
+        "id": "docker.togglePanel",
+        "title": "Docker: Toggle containers panel",
+        "action": "sidebar.right.toggle"
+      },
+      {
+        "id": "docker.summary",
+        "title": "Docker: Show running containers summary"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "docker.togglePanel",
+        "key": "Mod+Alt+D"
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "docker-status",
+        "text": "…",
+        "icon": "package",
+        "tooltip": "Docker containers",
+        "command": "docker.togglePanel"
+      }
+    ],
+    "settings": [
+      {
+        "key": "pollSeconds",
+        "title": "Safety refresh interval (seconds)",
+        "description": "The panel updates instantly from Docker events; this is only a fallback refresh while the panel is visible.",
+        "type": "integer",
+        "default": 30,
+        "minimum": 10,
+        "maximum": 300
+      },
+      {
+        "key": "dockerPath",
+        "title": "Docker command",
+        "description": "Path or name of the docker binary. Letters, digits and ./_+@- only.",
+        "type": "string",
+        "default": "docker",
+        "placeholder": "docker"
+      },
+      {
+        "key": "dockerContext",
+        "title": "Docker context",
+        "description": "Name from `docker context ls`. Leave empty to use the current context.",
+        "type": "string",
+        "default": "",
+        "placeholder": "default"
+      },
+      {
+        "key": "notifications",
+        "title": "Notify when a container crashes",
+        "description": "Desktop notification when a container exits with an error, runs out of memory or becomes unhealthy. Normal stops are ignored.",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "key": "statusBar",
+        "title": "Show container count in the status bar",
+        "type": "boolean",
+        "default": true
+      }
     ]
   },
   "capabilities": [
     {
       "kind": "storage:own"
+    },
+    {
+      "kind": "settings:own"
+    },
+    {
+      "kind": "terminal:send"
+    },
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "notifications:show"
     }
   ],
   "license": "MIT",
