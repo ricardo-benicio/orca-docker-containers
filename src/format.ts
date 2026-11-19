@@ -68,3 +68,13 @@ export function lookOf(row: { state: string; status: string }): Look {
       return { ...base, tone: 'neutral', filled: false, word: row.state === 'created' ? 'created' : null, problem: null }
   }
 }
+
+/** Parado de verdade: não está rodando, pausado nem reiniciando. */
+export function isStopped(state: string): boolean {
+  return state !== 'running' && state !== 'paused' && state !== 'restarting'
+}
+
+/** Ativos primeiro, parados no fim; dentro de cada faixa, por nome, para a lista não pular entre atualizações. */
+export function sortRows<T extends { state: string; name: string }>(rows: readonly T[]): T[] {
+  return [...rows].sort((a, b) => Number(isStopped(a.state)) - Number(isStopped(b.state)) || a.name.localeCompare(b.name))
+}

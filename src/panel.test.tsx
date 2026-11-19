@@ -172,3 +172,13 @@ test('o grupo de avulsos não tem ações de projeto', async () => {
   assert.equal(shows(view, 'Stop all'), false)
   await view.unmount()
 })
+
+test('dentro do grupo, containers parados aparecem depois dos ativos', async () => {
+  const view = await mount(panel, { host: hostWith(() => ({ ok: true, containers: [db, web, sick], at: 1 })) })
+  const tree = JSON.stringify(view.tree())
+  const at = (name: string) => tree.indexOf(JSON.stringify(`Details of ${name}`))
+  assert.ok(at('api') !== -1 && at('web') !== -1 && at('db') !== -1)
+  assert.ok(at('api') < at('web'))
+  assert.ok(at('web') < at('db'))
+  await view.unmount()
+})

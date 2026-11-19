@@ -27,7 +27,7 @@ import {
   update,
   type PanelContext
 } from 'orca'
-import { lookOf, type Look } from './format'
+import { lookOf, sortRows, type Look } from './format'
 import { translate, type Key } from './i18n'
 import type { Action, ContainerInfo, ContainerRow, DockerErrorCode, TerminalKind } from './protocol'
 
@@ -61,7 +61,7 @@ const groups = derived(() => {
     byProject.set(key, [...(byProject.get(key) ?? []), c])
   }
   const up = (rows: ContainerRow[]) => rows.filter((c) => c.state === 'running').length
-  return [...byProject.entries()].sort(([a, rowsA], [b, rowsB]) => up(rowsB) - up(rowsA) || a.localeCompare(b))
+  return [...byProject.entries()].map(([key, rows]): [string, ContainerRow[]] => [key, sortRows(rows)]).sort(([a, rowsA], [b, rowsB]) => up(rowsB) - up(rowsA) || a.localeCompare(b))
 })
 
 function errorText(cause: unknown): string {

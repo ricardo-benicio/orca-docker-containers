@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { compactDuration, lookOf } from './format.ts'
+import { compactDuration, isStopped, lookOf, sortRows } from './format.ts'
 
 test('encurta as durações do docker', () => {
   assert.equal(compactDuration('Less than a second'), '<1s')
@@ -63,4 +63,19 @@ test('estados sem status conhecido não quebram', () => {
   assert.equal(odd.word, null)
   assert.equal(odd.age, '')
   assert.equal(lookOf({ state: 'running', status: '' }).tone, 'success')
+})
+
+test('parados vão para o fim e o resto fica em ordem de nome', () => {
+  const rows = [
+    { name: 'queue', state: 'exited' },
+    { name: 'web', state: 'running' },
+    { name: 'cron', state: 'restarting' },
+    { name: 'api', state: 'running' },
+    { name: 'old', state: 'created' },
+    { name: 'db', state: 'paused' }
+  ]
+  assert.deepEqual(sortRows(rows).map((r) => r.name), ['api', 'cron', 'db', 'web', 'old', 'queue'])
+  assert.equal(isStopped('dead'), true)
+  assert.equal(isStopped('paused'), false)
+  assert.deepEqual(rows[0], { name: 'queue', state: 'exited' })
 })
