@@ -7,6 +7,7 @@ const ID_PATTERN = /^[a-f0-9]{12,64}$/
 const PROJECT_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/
 const ACTIONS = new Set(['start', 'stop', 'restart'])
 const PROJECT_LABEL = 'com.docker.compose.project'
+const WORKDIR_LABEL = 'com.docker.compose.project.working_dir'
 
 export class DockerError extends Error {
   readonly code: DockerErrorCode
@@ -47,6 +48,14 @@ export function parseProject(labels: string): string | null {
   return null
 }
 
+/** Pasta do projeto Compose nos labels; um caminho com vírgula é cortado e simplesmente não casa. */
+export function parseWorkingDir(labels: string): string | null {
+  for (const pair of labels.split(',')) {
+    if (pair.startsWith(`${WORKDIR_LABEL}=`)) return pair.slice(WORKDIR_LABEL.length + 1) || null
+  }
+  return null
+}
+
 export function parseLine(line: string): ContainerRow | null {
   let raw: Record<string, unknown>
   try {
@@ -64,7 +73,8 @@ export function parseLine(line: string): ContainerRow | null {
     state: text('State') || 'unknown',
     status: text('Status'),
     ports: parsePorts(text('Ports')),
-    project: parseProject(text('Labels'))
+    project: parseProject(text('Labels')),
+    workingDir: parseWorkingDir(text('Labels'))
   }
 }
 
@@ -185,6 +195,27 @@ export function parseInspect(stdout: string): ContainerInfo | null {
     destination: text(m.Destination),
     rw: m.RW !== false
   }))
+  const num = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
+  const brief = (value: unknown, max: number): string =>
+    typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, max) : ''
+  const rawState = (raw.State ?? {}) as Record<string, any>
+  const checks = Array.isArray(rawState.Health?.Log) ? rawState.Health.Log : []
+  const state = {
+    status: text(rawState.Status),
+    exitCode: num(rawState.ExitCode),
+    oomKilled: rawState.OOMKilled === true,
+    error: brief(rawState.Error, 300),
+    startedAt: text(rawState.StartedAt),
+    finishedAt: text(rawState.FinishedAt),
+    restartCount: num(raw.RestartCount),
+    health: rawState.Health
+      ? {
+          status: text(rawState.Health.Status),
+          failingStreak: num(rawState.Health.FailingStreak),
+          lastOutput: brief(checks.at(-1)?.Output, 300)
+        }
+      : null
+  }
   const args = Array.isArray(raw.Args) ? raw.Args.filter((a: unknown) => typeof a === 'string') : []
   return {
     id: raw.Id.slice(0, 12),
@@ -195,7 +226,9 @@ export function parseInspect(stdout: string): ContainerInfo | null {
     command: [text(raw.Path), ...args].filter(Boolean).join(' '),
     restart: text(raw.HostConfig?.RestartPolicy?.Name) || 'no',
     networks,
-    mounts
+    mounts,
+    memoryLimit: num(raw.HostConfig?.Memory),
+    state
   }
 }
 

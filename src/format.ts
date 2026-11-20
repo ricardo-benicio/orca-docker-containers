@@ -130,3 +130,20 @@ export function memoryTone(usage: Usage): 'danger' | 'warning' | null {
 export function cpuTone(usage: Usage): 'warning' | null {
   return usage.cpu >= 80 ? 'warning' : null
 }
+
+/** "2026-11-20T00:15:30.26Z" -> "2026-11-20 00:15:30 UTC"; o instante zero do Docker ("0001-01-01...") e lixo viram null. */
+export function formatUtc(iso: string): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2}:\d{2})/.exec(iso)
+  if (!match || match[1] === '0001') return null
+  return `${match[1]}-${match[2]}-${match[3]} ${match[4]} UTC`
+}
+
+export type DiagState = { status: string; exitCode: number; oomKilled: boolean; error: string; health: { status: string } | null }
+
+/** Cor do estado nos detalhes: vermelho para o que falhou, âmbar para o que está instável. */
+export function diagTone(state: DiagState): 'danger' | 'warning' | null {
+  if (state.oomKilled || state.error || state.health?.status === 'unhealthy' || state.status === 'dead') return 'danger'
+  if ((state.status === 'exited' || state.status === 'created') && !CLEAN_EXIT.has(state.exitCode)) return 'danger'
+  if (state.status === 'restarting' || state.status === 'paused' || state.health?.status === 'starting') return 'warning'
+  return null
+}

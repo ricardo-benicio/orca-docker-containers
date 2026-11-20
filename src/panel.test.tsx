@@ -85,7 +85,7 @@ test('o filtro e o interruptor reduzem a lista', async () => {
   await view.unmount()
 })
 
-const info = { id: 'a'.repeat(12), name: 'web', image: 'nginx', created: '2026-11-19T18:00:00Z', command: 'nginx -g daemon off;', restart: 'unless-stopped', networks: [{ name: 'meu-app_default', ip: '172.18.0.2' }], mounts: [{ type: 'volume', source: 'data', destination: '/data', rw: false }] }
+const info = { id: 'a'.repeat(12), name: 'web', image: 'nginx', created: '2026-11-19T18:00:00Z', command: 'nginx -g daemon off;', restart: 'unless-stopped', networks: [{ name: 'meu-app_default', ip: '172.18.0.2' }], mounts: [{ type: 'volume', source: 'data', destination: '/data', rw: false }], memoryLimit: 0, state: { status: 'running', exitCode: 0, oomKilled: false, error: '', startedAt: '2026-11-19T18:00:05Z', finishedAt: '0001-01-01T00:00:00Z', restartCount: 0, health: null } }
 
 test('mostra rede, volumes e comando nos detalhes, sem segredos', async () => {
   const view = await mount(panel, {
@@ -309,5 +309,78 @@ test('o tempo ativo anda sozinho entre as leituras e recomeça a cada nova leitu
   } finally {
     Date.now = realNow
   }
+  await view.unmount()
+})
+
+const shopRow = (name: string, project: string, dir: string): ContainerRow => ({ id: name.padEnd(12, '0').slice(0, 12), name, image: 'nginx', state: 'running', status: 'Up 1 hour', ports: [], project, workingDir: dir })
+
+test('o projeto que mora no workspace em foco vai para o topo com a etiqueta', async () => {
+  const rows = [shopRow('aaa', 'alfa', '/home/a/alfa'), shopRow('loja-web', 'loja', '/home/a/loja/docker'), shopRow('zzz', 'zeta', '/home/a/zeta')]
+  const view = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: rows, at: 1 }), { 'workspace.context': () => ({ name: 'loja', path: '/home/a/loja' }) })
+  })
+  const tree = JSON.stringify(view.tree())
+  assert.ok(shows(view, 'this workspace'))
+  assert.ok(tree.indexOf('"loja"') < tree.indexOf('"alfa"'), 'loja vem antes de alfa, mesmo na ordem alfabética')
+  assert.equal(tree.split('this workspace').length - 1, 1, 'só um projeto leva a etiqueta')
+  await view.unmount()
+})
+
+test('sem workspace em foco, ou sem projeto nele, a lista segue como antes', async () => {
+  const rows = [shopRow('aaa', 'alfa', '/home/a/alfa'), shopRow('zzz', 'zeta', '/home/a/zeta')]
+  for (const context of [{ name: null, path: null }, { name: 'outro', path: '/home/a/outro' }, { name: 'alf', path: '/home/a/alf' }]) {
+    const view = await mount(panel, { host: hostWith(() => ({ ok: true, containers: rows, at: 1 }), { 'workspace.context': () => context }) })
+    assert.equal(shows(view, 'this workspace'), false, JSON.stringify(context))
+    await view.unmount()
+  }
+})
+
+test('trocar o workspace em foco muda o projeto destacado', async () => {
+  const rows = [shopRow('aaa', 'alfa', '/home/a/alfa'), shopRow('zzz', 'zeta', '/home/a/zeta')]
+  let focus = { name: 'alfa', path: '/home/a/alfa' }
+  const view = await mount(panel, { host: hostWith(() => ({ ok: true, containers: rows, at: 1 }), { 'workspace.context': () => focus }) })
+  const where = () => {
+    const tree = JSON.stringify(view.tree())
+    const badge = tree.indexOf('this workspace')
+    return tree.lastIndexOf('"alfa"', badge) > tree.lastIndexOf('"zeta"', badge) ? 'alfa' : 'zeta'
+  }
+  assert.equal(where(), 'alfa')
+  focus = { name: 'zeta', path: '/home/a/zeta' }
+  await view.emit('workspace.changed', { context: { workspaceId: 'w', branch: 'main', displayName: 'zeta', terminals: [] } })
+  assert.equal(where(), 'zeta')
+  await view.unmount()
+})
+
+test('os detalhes explicam por que o container caiu', async () => {
+  const dead: ContainerRow = { ...db, state: 'exited', status: 'Exited (137) 3 seconds ago' }
+  const diag = {
+    ...info,
+    memoryLimit: 16 * 1024 ** 2,
+    state: { status: 'exited', exitCode: 137, oomKilled: true, error: 'exec: "/nao-existe": not found', startedAt: '2026-11-20T00:15:30.26Z', finishedAt: '2026-11-20T00:15:31.00Z', restartCount: 3, health: { status: 'unhealthy', failingStreak: 4, lastOutput: 'falhou no check' } }
+  }
+  const view = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: [dead], at: 1 }), { 'containers.inspect': () => ({ ok: true, info: diag }) })
+  })
+  await view.press({ label: 'Details of db' })
+  assert.ok(shows(view, 'exited (137)'))
+  assert.ok(shows(view, 'Yes, killed for using too much memory'))
+  assert.ok(shows(view, 'exec: "/nao-existe": not found'))
+  assert.ok(shows(view, 'unhealthy · 4 failed in a row'))
+  assert.ok(shows(view, 'falhou no check'))
+  assert.ok(shows(view, '2026-11-20 00:15:30 UTC'))
+  assert.ok(shows(view, '2026-11-20 00:15:31 UTC'))
+  assert.ok(shows(view, '16 MB'))
+  await view.unmount()
+})
+
+test('container saudável não mostra alarme nos detalhes', async () => {
+  const view = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: [web], at: 1 }), { 'containers.inspect': () => ({ ok: true, info }) })
+  })
+  await view.press({ label: 'Details of web' })
+  assert.equal(shows(view, 'Yes, killed'), false)
+  assert.equal(shows(view, 'Finished'), false, 'rodando não tem horário de término')
+  assert.ok(shows(view, 'Started'))
+  assert.ok(shows(view, 'no limit'))
   await view.unmount()
 })

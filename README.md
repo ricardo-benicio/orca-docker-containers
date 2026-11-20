@@ -9,7 +9,8 @@ something starts or stops.
 ## Features
 
 - **Grouped by project.** Containers are grouped by their Docker Compose project; the rest go under
-  "Standalone". Projects with running containers come first.
+  "Standalone". The project whose Compose folder is inside the workspace you are viewing goes first,
+  tagged `this workspace`; after that, projects with running containers come first.
 - **Live.** Listens to `docker events`, so the list updates instantly, even when you start or stop
   something from a terminal. A 30-second refresh is kept as a safety net.
 - **Status at a glance.** Two compact lines per container: a coloured dot (filled when running, hollow when stopped), the image, a short uptime like `3h` and the published ports. A state word appears only when it matters (`unhealthy`, `restarting`, `paused`, `exited (3)`), and containers that need attention get a tinted row.
@@ -17,7 +18,7 @@ something starts or stops.
 - **Actions.** Start, stop and restart a container, or a whole Compose project at once, with the project buttons in the group header. Stopping or restarting a whole project asks for confirmation first (starting does not). Click the project name to collapse it.
 - **Logs.** The last 200 lines of any container, right in the panel, or follow them live in an Orca terminal.
 - **Shell.** Open a shell inside a running container in a new Orca terminal (bash if the image has it, otherwise sh).
-- **Details.** Image, command, restart policy, networks and volumes (never environment variables or labels).
+- **Details and diagnostics.** Why a container is in its state: exit code, out-of-memory kill, the runtime error Docker reported, restart count, start and finish time, health status and the output of the last health check. Plus image, command, restart policy, memory limit, networks and volumes. Never environment variables or labels.
 - **Status bar.** A `running/total` counter you can click to toggle the sidebar, plus a `Docker: Show running containers summary` command in the palette and the `Mod+Alt+D` shortcut.
 - **Notifications.** A desktop notification when a container crashes (non-zero exit), runs out of memory or turns unhealthy. Normal stops are ignored and repeats are throttled.
 - **Open a port.** One click opens `http://localhost:<port>` in your browser.
@@ -53,14 +54,14 @@ icon in the right sidebar tabs.
 ## Security
 
 This plugin runs a Node worker with your user's access (`trusted-worker`), which is why Orca asks for
-explicit approval. Version 0.3.0 asked for more than 0.2.0; 0.4.x to 0.6.x ask for nothing new. Here
+explicit approval. Version 0.3.0 asked for more than 0.2.0; 0.4.x to 0.7.x ask for nothing new. Here
 is what each permission is used for, and nothing else:
 
 | Permission | Used for |
 | --- | --- |
 | Run its own code | Talking to the `docker` CLI and watching `docker events` |
 | `terminal:send` | Opening one terminal in your focused workspace when you press **Open shell** or **Follow logs**. Orca describes this permission broadly (it also covers typing into terminals); the plugin only calls `terminal.create`. |
-| `workspace:read` | Reading the id of the focused workspace, to know where to open that terminal. Nothing else about your workspaces is read. |
+| `workspace:read` | Finding the focused workspace: its id (to open terminals there) and its folder (to highlight the Compose project that lives in it). The worker reads your workspace list to find that one; only its name and folder reach the panel. |
 | `notifications:show` | The crash, out-of-memory and unhealthy notifications |
 | `settings:own` | Reading this plugin's own settings |
 | `storage:own` | Remembering the panel's filter and collapsed groups |
@@ -74,7 +75,9 @@ What the worker runs:
   to contain only letters, digits and `./_+@-`, so nothing can be injected into the terminal line.
 - It rejects invalid ids, project names and actions before calling Docker.
 - It never deletes containers, images or volumes, and never sends environment variables or labels
-  to the panel.
+  to the panel: from the labels it keeps only the Compose project name and folder. The details view
+  shows the state, error text and last health check output that `docker inspect` reports (truncated
+  to 300 characters), which are the same kind of text you would see in the logs.
 - It makes no network requests. The only link it opens is `http://localhost:<port>` for a port you
   click, in your browser.
 

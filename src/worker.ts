@@ -21,6 +21,7 @@ import {
 import { watchEvents, type Watcher } from './events'
 import { translate, type Key } from './i18n'
 import type { ContainerRow } from './protocol'
+import { pickWorkspace } from './workspace'
 
 const STATUS_ID = 'docker-status'
 const SAFETY_REFRESH_MS = 60_000
@@ -183,6 +184,19 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
       return { ok: true, count: await projectAction(input.project, input.action, signal) }
     } catch (error) {
       return { ok: false, count: 0, error: message(error) }
+    }
+  })
+
+  orca.panels.handle('workspace.context', async () => {
+    try {
+      const context = await orca.host.call('workspace.readContext')
+      if (!context) return { name: null, path: null }
+      const { workspaces } = await orca.host.call('workspace.list')
+      const found = pickWorkspace(context, workspaces)
+      return { name: context.displayName || null, path: found?.path ?? null }
+    } catch {
+      // Sem permissão de leitura ou Orca antigo: o painel só não destaca o projeto.
+      return { name: null, path: null }
     }
   })
 

@@ -13,6 +13,7 @@ import {
   IconButton,
   Input,
   KeyValue,
+  on,
   plugin,
   read,
   RelativeTime,
@@ -27,9 +28,10 @@ import {
   update,
   type PanelContext
 } from 'orca'
-import { cpuTone, formatBytes, formatCpu, lookOf, memoryTone, sortRows, type Look } from './format'
+import { cpuTone, diagTone, formatBytes, formatCpu, formatUtc, lookOf, memoryTone, sortRows, type Look } from './format'
+import { isInside } from './workspace'
 import { translate, type Key } from './i18n'
-import type { Action, ContainerInfo, ContainerRow, ContainerStats, DockerErrorCode, TerminalKind } from './protocol'
+import type { Action, ContainerInfo, ContainerRow, ContainerStats, DockerErrorCode, TerminalKind, WorkspaceContext } from './protocol'
 
 /** Rede de segurança: os eventos do Docker já atualizam a lista na hora. Ajustável nas configurações. */
 const DEFAULT_POLL_SECONDS = 30
@@ -40,6 +42,7 @@ const STATS_SECONDS = 5
 const containers = atom<ContainerRow[] | null>(null)
 const stats = atom<Record<string, ContainerStats>>({})
 /** Relógio do próprio painel: o tempo ativo vem do texto do Docker no instante da consulta e precisa andar sozinho. */
+const workspace = atom<WorkspaceContext>({ name: null, path: null })
 const clock = atom(Date.now())
 const listedAt = atom<number | null>(null)
 const failure = atom<{ code: DockerErrorCode; error: string } | null>(null)
@@ -57,6 +60,12 @@ const collapsed = atom<readonly string[]>('collapsed', [], { persist: 'plugin' }
 
 const t = (key: Key, vars?: Record<string, string | number>): string => translate(env.locale, key, vars)
 
+/** O projeto Compose mora na pasta do workspace em foco (ou dentro dela). */
+function isHere(rows: ContainerRow[]): boolean {
+  const path = read(workspace).path
+  return rows.some((row) => isInside(row.workingDir, path))
+}
+
 const groups = derived(() => {
   const text = read(query).trim().toLowerCase()
   const running = read(onlyRunning)
@@ -69,7 +78,10 @@ const groups = derived(() => {
     byProject.set(key, [...(byProject.get(key) ?? []), c])
   }
   const up = (rows: ContainerRow[]) => rows.filter((c) => c.state === 'running').length
-  return [...byProject.entries()].map(([key, rows]): [string, ContainerRow[]] => [key, sortRows(rows)]).sort(([a, rowsA], [b, rowsB]) => up(rowsB) - up(rowsA) || a.localeCompare(b))
+  const here = (key: string, rows: ContainerRow[]) => key !== STANDALONE && isHere(rows)
+  return [...byProject.entries()]
+    .map(([key, rows]): [string, ContainerRow[]] => [key, sortRows(rows)])
+    .sort(([a, rowsA], [b, rowsB]) => Number(here(b, rowsB)) - Number(here(a, rowsA)) || up(rowsB) - up(rowsA) || a.localeCompare(b))
 })
 
 function errorText(cause: unknown): string {
@@ -90,6 +102,14 @@ async function refresh(): Promise<void> {
     }
   } catch (cause) {
     set(failure, { code: 'unknown', error: errorText(cause) })
+  }
+}
+
+async function refreshWorkspace(): Promise<void> {
+  try {
+    set(workspace, await plugin.request('workspace.context'))
+  } catch {
+    set(workspace, { name: null, path: null })
   }
 }
 
@@ -174,7 +194,14 @@ function toggleGroup(key: string, open: boolean): void {
 /** Roda uma vez antes do primeiro render; o que entra em `subscriptions` termina com o painel. */
 export function setup(ctx: PanelContext): void {
   void refresh()
+  void refreshWorkspace()
   ctx.subscriptions.push(plugin.on('containers.changed', () => void refresh()))
+  // Trocar o workspace em foco muda qual projeto vai para o topo. Sem `workspace:read`, só não destaca.
+  try {
+    ctx.subscriptions.push(on('workspace.changed', () => void refreshWorkspace()))
+  } catch {
+    // Orca sem esse evento: o destaque fica como na abertura do painel.
+  }
   let timer: ReturnType<typeof setInterval> | null = null
   const arm = async (): Promise<void> => {
     if (timer) clearInterval(timer)
@@ -307,26 +334,63 @@ function ContainerItem({ row }: { row: ContainerRow }) {
   )
 }
 
+const KNOWN_STATES = new Set(['running', 'exited', 'created', 'paused', 'restarting', 'dead'])
+
+function stateWord(status: string): string {
+  return KNOWN_STATES.has(status) ? t(`state${status[0]!.toUpperCase()}${status.slice(1)}` as Key) : status
+}
+
+type DetailItem = { label: string; value: string; code?: boolean; tone?: 'danger' | 'warning' }
+
+/** Por que o container está assim: só o que ajuda a depurar, sem ambiente nem labels. */
+function diagnosticItems(info: ContainerInfo): DetailItem[] {
+  const { state } = info
+  const tone = diagTone(state) ?? undefined
+  const ended = state.status !== 'running' && state.status !== 'paused' && state.status !== 'restarting'
+  const started = formatUtc(state.startedAt)
+  const finished = ended ? formatUtc(state.finishedAt) : null
+  const items: DetailItem[] = []
+  if (state.status) {
+    const code = state.exitCode !== 0 || ended ? ` (${state.exitCode})` : ''
+    items.push({ label: t('detailState'), value: `${stateWord(state.status)}${code}`, tone })
+  }
+  if (state.oomKilled) items.push({ label: t('detailOom'), value: t('oomYes'), tone: 'danger' })
+  if (state.error) items.push({ label: t('detailError'), value: state.error, code: true, tone: 'danger' })
+  if (state.health) {
+    const word = state.health.status === 'healthy' ? t('healthHealthy') : state.health.status === 'unhealthy' ? t('stateUnhealthy') : t('stateStarting')
+    const streak = state.health.failingStreak > 0 ? ` · ${t('failedChecks', { count: state.health.failingStreak })}` : ''
+    items.push({ label: t('detailHealth'), value: `${word}${streak}`, tone: state.health.status === 'unhealthy' ? 'danger' : state.health.status === 'starting' ? 'warning' : undefined })
+    if (state.health.lastOutput) items.push({ label: t('detailLastCheck'), value: state.health.lastOutput, code: true })
+  }
+  items.push({ label: t('detailRestarts'), value: String(state.restartCount), tone: state.restartCount > 0 ? 'warning' : undefined })
+  if (started) items.push({ label: t('detailStarted'), value: started })
+  if (finished) items.push({ label: t('detailFinished'), value: finished })
+  return items
+}
+
+function generalItems(info: ContainerInfo, none: string): DetailItem[] {
+  return [
+    { label: t('detailId'), value: info.id, code: true },
+    { label: t('detailImage'), value: info.image || none, code: true },
+    { label: t('detailCreated'), value: formatUtc(info.created) ?? none },
+    { label: t('detailCommand'), value: info.command || none, code: true },
+    { label: t('detailRestart'), value: info.restart },
+    { label: t('detailMemoryLimit'), value: info.memoryLimit > 0 ? formatBytes(info.memoryLimit) : t('detailNoLimit') },
+    { label: t('detailNetworks'), value: info.networks.length ? info.networks.map((n) => (n.ip ? `${n.name} (${n.ip})` : n.name)).join(', ') : none },
+    ...(info.mounts.length
+      ? info.mounts.map((m, i) => ({
+          label: i === 0 ? t('detailVolumes') : '',
+          value: `${m.source || m.type} → ${m.destination}${m.rw ? '' : ' (ro)'}`,
+          code: true
+        }))
+      : [{ label: t('detailVolumes'), value: none }])
+  ]
+}
+
 function DetailView({ view }: { view: { row: ContainerRow; info: ContainerInfo | null; error: string | null } }) {
   const { row, info, error } = view
   const none = t('detailNone')
-  const items = info
-    ? [
-        { label: t('detailId'), value: info.id, code: true },
-        { label: t('detailImage'), value: info.image || none, code: true },
-        { label: t('detailCreated'), value: info.created ? info.created.slice(0, 19).replace('T', ' ') + ' UTC' : none },
-        { label: t('detailCommand'), value: info.command || none, code: true },
-        { label: t('detailRestart'), value: info.restart },
-        { label: t('detailNetworks'), value: info.networks.length ? info.networks.map((n) => (n.ip ? `${n.name} (${n.ip})` : n.name)).join(', ') : none },
-        ...(info.mounts.length
-          ? info.mounts.map((m, i) => ({
-              label: i === 0 ? t('detailVolumes') : '',
-              value: `${m.source || m.type} → ${m.destination}${m.rw ? '' : ' (ro)'}`,
-              code: true
-            }))
-          : [{ label: t('detailVolumes'), value: none }])
-      ]
-    : []
+  const items = info ? [...diagnosticItems(info), ...generalItems(info, none)] : []
   return (
     <Stack gap="xs">
       <Row justify="between" align="center">
@@ -388,7 +452,7 @@ function ConfirmBar({ project, rows, action }: { project: string; rows: Containe
 }
 
 /** Cabeçalho do grupo: recolhe/expande à esquerda, ações do projeto à direita, na mesma linha. */
-function GroupHeader({ id, label, group, open }: { id: string; label: string; group: ContainerRow[]; open: boolean }) {
+function GroupHeader({ id, label, group, open, here }: { id: string; label: string; group: ContainerRow[]; open: boolean; here: boolean }) {
   const up = group.filter((c) => c.state === 'running').length
   const pending = read(confirming)
   const asking = pending?.project === id ? pending.action : null
@@ -400,6 +464,7 @@ function GroupHeader({ id, label, group, open }: { id: string; label: string; gr
             {label}
           </Button>
           <Text muted size="xs">{`${up}/${group.length}`}</Text>
+          {here ? <Badge tone="accent">{t('thisWorkspace')}</Badge> : null}
         </Row>
         {id === STANDALONE || asking ? null : <ProjectActions project={id} rows={group} />}
       </Row>
@@ -476,7 +541,7 @@ export default function Panel() {
           const open = !closed.includes(key)
           return (
             <Stack key={key} gap="xs">
-              <GroupHeader id={key} label={label} group={group} open={open} />
+              <GroupHeader id={key} label={label} group={group} open={open} here={key !== STANDALONE && isHere(group)} />
               {open ? group.map((row) => <ContainerItem key={row.id} row={row} />) : null}
             </Stack>
           )

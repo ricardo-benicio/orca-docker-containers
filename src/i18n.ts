@@ -78,7 +78,22 @@ const en = {
   confirmStopOne: 'Stop the running container in {project}?',
   confirmStopMany: 'Stop {count} running containers in {project}?',
   confirmRestartOne: 'Restart the container in {project}?',
-  confirmRestartMany: 'Restart all {count} containers in {project}?'
+  confirmRestartMany: 'Restart all {count} containers in {project}?',
+  thisWorkspace: 'this workspace',
+  stateRunning: 'running',
+  detailState: 'State',
+  detailOom: 'Out of memory',
+  oomYes: 'Yes, killed for using too much memory',
+  detailRestarts: 'Restarts',
+  detailStarted: 'Started',
+  detailFinished: 'Finished',
+  detailHealth: 'Health',
+  healthHealthy: 'healthy',
+  failedChecks: '{count} failed in a row',
+  detailLastCheck: 'Last health check',
+  detailError: 'Error',
+  detailMemoryLimit: 'Memory limit',
+  detailNoLimit: 'no limit'
 }
 
 export type Key = keyof typeof en
@@ -162,7 +177,22 @@ const pt: Record<Key, string> = {
   confirmStopOne: 'Parar o container em execução em {project}?',
   confirmStopMany: 'Parar {count} containers em execução em {project}?',
   confirmRestartOne: 'Reiniciar o container de {project}?',
-  confirmRestartMany: 'Reiniciar os {count} containers de {project}?'
+  confirmRestartMany: 'Reiniciar os {count} containers de {project}?',
+  thisWorkspace: 'este workspace',
+  stateRunning: 'em execução',
+  detailState: 'Estado',
+  detailOom: 'Sem memória',
+  oomYes: 'Sim, encerrado por usar memória demais',
+  detailRestarts: 'Reinícios',
+  detailStarted: 'Iniciado',
+  detailFinished: 'Encerrado',
+  detailHealth: 'Saúde',
+  healthHealthy: 'saudável',
+  failedChecks: '{count} seguidas com falha',
+  detailLastCheck: 'Último health check',
+  detailError: 'Erro',
+  detailMemoryLimit: 'Limite de memória',
+  detailNoLimit: 'sem limite'
 }
 
 export function translate(locale: string | undefined, key: Key, vars: Record<string, string | number> = {}): string {

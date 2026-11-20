@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "docker-containers",
   "name": "Docker Containers",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Docker containers in the Orca sidebar, grouped by Compose project: live status, logs, shell, start/stop/restart, status bar counter and crash notifications.",
   "engines": {
     "orca": ">=1.4.248"
@@ -122,9 +122,9 @@
   "screenshots": [
     {
       "path": "assets/screenshots/grouped.png",
-      "caption": "Every state at a glance: unhealthy and restarting containers stand out, stopped ones show their exit code",
+      "caption": "Your workspace's Compose project comes first, and containers in trouble stand out",
       "theme": "dark",
-      "alt": "Docker panel with two-line rows: coloured status dots, an unhealthy container in red, a restarting one in amber, a stopped one with its exit code"
+      "alt": "Docker panel: the project tagged this workspace is on top, with an unhealthy container in red; a second project and a stopped container follow"
     },
     {
       "path": "assets/screenshots/live-status.png",

@@ -266,3 +266,36 @@ test('devolve CPU e memória por id e explica falhas sem derrubar o painel', asy
     await finish(failing)
   }
 })
+
+const FOCUS = { workspaceId: 'ws-1', branch: 'main', displayName: 'loja', terminals: [] }
+const LIST = { workspaces: [{ id: 'ws-1', kind: 'worktree', name: 'loja', path: '/home/a/loja', branch: 'main', hostId: 'local' }], truncated: false }
+
+test('devolve o nome e a pasta do workspace em foco', async () => {
+  fakeDocker([])
+  fakeWatcher()
+  const worker = await mount({ results: { 'workspace.readContext': FOCUS, 'workspace.list': LIST } })
+  try {
+    assert.deepEqual(await worker.request('workspace.context'), { name: 'loja', path: '/home/a/loja' })
+  } finally {
+    await finish(worker)
+  }
+})
+
+test('sem workspace em foco ou sem permissão, devolve vazio e não derruba o painel', async () => {
+  fakeDocker([])
+  fakeWatcher()
+  const none = await mount({ results: { 'workspace.readContext': null } })
+  try {
+    assert.deepEqual(await none.request('workspace.context'), { name: null, path: null })
+  } finally {
+    await finish(none)
+  }
+  fakeDocker([])
+  fakeWatcher()
+  const denied = await mount({ requests: { 'workspace.readContext': () => { throw new Error('capability_denied') } } as never })
+  try {
+    assert.deepEqual(await denied.request('workspace.context'), { name: null, path: null })
+  } finally {
+    await finish(denied)
+  }
+})

@@ -15,6 +15,8 @@ export type ContainerRow = {
   ports: PublishedPort[]
   /** Projeto do Docker Compose; null quando o container é avulso. */
   project: string | null
+  /** Pasta do projeto Compose no host (label `working_dir`), usada para achar o workspace dele. */
+  workingDir?: string | null
 }
 
 export type DockerErrorCode = 'docker_missing' | 'daemon_down' | 'permission' | 'unknown'
@@ -35,7 +37,26 @@ export type ContainerInfo = {
   restart: string
   networks: { name: string; ip: string }[]
   mounts: { type: string; source: string; destination: string; rw: boolean }[]
+  /** Limite de memória em bytes; 0 quando não há limite. */
+  memoryLimit: number
+  /** Diagnóstico: por que o container está assim. Só campos de estado, nunca ambiente nem labels. */
+  state: ContainerState
 }
+
+export type ContainerState = {
+  status: string
+  exitCode: number
+  oomKilled: boolean
+  /** Erro de execução relatado pelo Docker (ex.: comando não encontrado). Texto curto, sem controle. */
+  error: string
+  startedAt: string
+  finishedAt: string
+  restartCount: number
+  health: { status: string; failingStreak: number; lastOutput: string } | null
+}
+
+/** Workspace em foco no Orca e a pasta dele, para destacar o projeto Compose que mora lá. */
+export type WorkspaceContext = { name: string | null; path: string | null }
 
 /** Uso de recursos de um container em execução, lido de `docker stats --no-stream`. */
 export type ContainerStats = {
@@ -65,6 +86,8 @@ declare module 'orca' {
       input: { project: string; action: Action }
       output: { ok: boolean; count: number; error?: string }
     }
+    /** Nome e pasta do workspace em foco no Orca; vazios quando nenhum está em foco. */
+    'workspace.context': { output: WorkspaceContext }
     /** Rede, volumes, comando e política de restart de um container. */
     'containers.inspect': {
       input: { id: string }

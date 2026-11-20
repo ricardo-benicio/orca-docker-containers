@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { compactDuration, compactSeconds, cpuTone, durationSeconds, formatBytes, formatCpu, isStopped, lookOf, memoryTone, sortRows } from './format.ts'
+import { compactDuration, diagTone, formatUtc, compactSeconds, cpuTone, durationSeconds, formatBytes, formatCpu, isStopped, lookOf, memoryTone, sortRows } from './format.ts'
 
 test('encurta as durações do docker', () => {
   assert.equal(compactDuration('Less than a second'), '<1s')
@@ -132,4 +132,25 @@ test('soma o tempo que passou desde a leitura para o tempo ativo não congelar',
   assert.equal(lookOf({ state: 'running', status: 'Up 5 seconds' }, -10).age, '5s')
   assert.equal(lookOf({ state: 'running', status: '' }, 100).age, '')
   assert.equal(lookOf({ state: 'running', status: 'texto novo do docker' }, 100).age, '')
+})
+
+test('formata horário do docker e esconde o instante zero', () => {
+  assert.equal(formatUtc('2026-11-20T00:15:30.265452404Z'), '2026-11-20 00:15:30 UTC')
+  assert.equal(formatUtc('0001-01-01T00:00:00Z'), null)
+  assert.equal(formatUtc(''), null)
+  assert.equal(formatUtc('ontem'), null)
+})
+
+test('cor do estado nos detalhes: vermelho para falha, âmbar para instável', () => {
+  const ok = { status: 'running', exitCode: 0, oomKilled: false, error: '', health: null }
+  assert.equal(diagTone(ok), null)
+  assert.equal(diagTone({ ...ok, oomKilled: true }), 'danger')
+  assert.equal(diagTone({ ...ok, error: 'x' }), 'danger')
+  assert.equal(diagTone({ ...ok, health: { status: 'unhealthy' } }), 'danger')
+  assert.equal(diagTone({ ...ok, health: { status: 'starting' } }), 'warning')
+  assert.equal(diagTone({ ...ok, status: 'exited', exitCode: 3 }), 'danger')
+  assert.equal(diagTone({ ...ok, status: 'exited', exitCode: 137 }), null)
+  assert.equal(diagTone({ ...ok, status: 'exited', exitCode: 0 }), null)
+  assert.equal(diagTone({ ...ok, status: 'created', exitCode: 127 }), 'danger')
+  assert.equal(diagTone({ ...ok, status: 'restarting' }), 'warning')
 })
