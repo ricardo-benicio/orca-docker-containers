@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { compactDuration, cpuTone, formatBytes, formatCpu, isStopped, lookOf, memoryTone, sortRows } from './format.ts'
+import { compactDuration, compactSeconds, cpuTone, durationSeconds, formatBytes, formatCpu, isStopped, lookOf, memoryTone, sortRows } from './format.ts'
 
 test('encurta as durações do docker', () => {
   assert.equal(compactDuration('Less than a second'), '<1s')
@@ -100,4 +100,36 @@ test('só destaca consumo que preocupa', () => {
   assert.equal(memoryTone({ cpu: 0, memPercent: 93 }), 'danger')
   assert.equal(cpuTone({ cpu: 79, memPercent: 0 }), null)
   assert.equal(cpuTone({ cpu: 120, memPercent: 0 }), 'warning')
+})
+
+test('converte o texto do docker em segundos e de volta, nas mesmas faixas', () => {
+  assert.equal(durationSeconds('Less than a second'), 0)
+  assert.equal(durationSeconds('About a minute'), 60)
+  assert.equal(durationSeconds('About an hour'), 3600)
+  assert.equal(durationSeconds('3 days'), 259_200)
+  assert.equal(durationSeconds('quando der'), null)
+  assert.equal(compactSeconds(0), '<1s')
+  assert.equal(compactSeconds(59.9), '59s')
+  assert.equal(compactSeconds(60), '1m')
+  assert.equal(compactSeconds(3599), '59m')
+  assert.equal(compactSeconds(3600), '1h')
+  assert.equal(compactSeconds(47 * 3600), '47h')
+  assert.equal(compactSeconds(48 * 3600), '2d')
+  assert.equal(compactSeconds(13 * 86_400), '13d')
+  assert.equal(compactSeconds(14 * 86_400), '2w')
+  assert.equal(compactSeconds(60 * 86_400), '2mo')
+  assert.equal(compactSeconds(365 * 86_400), '1y')
+  assert.equal(compactSeconds(-5), '<1s')
+})
+
+test('soma o tempo que passou desde a leitura para o tempo ativo não congelar', () => {
+  assert.equal(lookOf({ state: 'running', status: 'Up Less than a second' }).age, '<1s')
+  assert.equal(lookOf({ state: 'running', status: 'Up Less than a second' }, 8).age, '8s')
+  assert.equal(lookOf({ state: 'running', status: 'Up 59 seconds' }, 2).age, '1m')
+  assert.equal(lookOf({ state: 'running', status: 'Up About a minute' }, 30).age, '1m')
+  assert.equal(lookOf({ state: 'running', status: 'Up 2 hours (healthy)' }, 3600).age, '3h')
+  assert.equal(lookOf({ state: 'exited', status: 'Exited (3) 16 seconds ago' }, 50).age, '1m')
+  assert.equal(lookOf({ state: 'running', status: 'Up 5 seconds' }, -10).age, '5s')
+  assert.equal(lookOf({ state: 'running', status: '' }, 100).age, '')
+  assert.equal(lookOf({ state: 'running', status: 'texto novo do docker' }, 100).age, '')
 })

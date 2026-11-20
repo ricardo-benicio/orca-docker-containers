@@ -287,3 +287,27 @@ test('a pergunta de um projeto não afeta os outros e usa o singular', async () 
   assert.ok(shows(view, 'Start all'), 'o outro projeto mantém seus ícones')
   await view.unmount()
 })
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+test('o tempo ativo anda sozinho entre as leituras e recomeça a cada nova leitura', async () => {
+  let rows: ContainerRow[] = [{ ...web, status: 'Up Less than a second' }]
+  const view = await mount(panel, { host: hostWith(() => ({ ok: true, containers: rows, at: 1 })) })
+  assert.ok(shows(view, '· <1s'))
+  const realNow = Date.now
+  Date.now = () => realNow() + 30_000
+  try {
+    await sleep(1300)
+    await view.settled()
+    const walked = ['· 30s', '· 31s', '· 32s'].some((text) => shows(view, text))
+    assert.ok(walked, 'depois de 30 s o painel precisa mostrar cerca de 30s, não <1s')
+    assert.equal(shows(view, '· <1s'), false)
+    rows = [{ ...web, status: 'Up 31 seconds' }]
+    await view.post('containers.changed', { at: 2 })
+    assert.ok(['· 31s', '· 32s'].some((text) => shows(view, text)), 'a nova leitura substitui o tempo, sem somar duas vezes')
+    assert.equal(shows(view, '· 1m'), false)
+  } finally {
+    Date.now = realNow
+  }
+  await view.unmount()
+})

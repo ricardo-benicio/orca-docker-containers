@@ -39,6 +39,9 @@ const STATS_SECONDS = 5
 
 const containers = atom<ContainerRow[] | null>(null)
 const stats = atom<Record<string, ContainerStats>>({})
+/** Relógio do próprio painel: o tempo ativo vem do texto do Docker no instante da consulta e precisa andar sozinho. */
+const clock = atom(Date.now())
+const listedAt = atom<number | null>(null)
 const failure = atom<{ code: DockerErrorCode; error: string } | null>(null)
 const updatedAt = atom<number | null>(null)
 const busy = atom<readonly string[]>([])
@@ -79,6 +82,8 @@ async function refresh(): Promise<void> {
     if (result.ok) {
       set(containers, result.containers)
       set(updatedAt, result.at)
+      set(listedAt, Date.now())
+      set(clock, Date.now())
       set(failure, null)
     } else {
       set(failure, { code: result.code, error: result.error })
@@ -186,6 +191,11 @@ export function setup(ctx: PanelContext): void {
   }
   void arm()
 
+  const ticker = setInterval(() => {
+    if (read(ctx.visible)) set(clock, Date.now())
+  }, 1000)
+  ctx.subscriptions.push({ dispose: () => clearInterval(ticker) })
+
   let statsTimer: ReturnType<typeof setInterval> | null = null
   const armStats = async (): Promise<void> => {
     if (statsTimer) clearInterval(statsTimer)
@@ -225,7 +235,9 @@ function stateKey(word: NonNullable<Look['word']>): Key {
 function ContainerItem({ row }: { row: ContainerRow }) {
   const working = read(busy).includes(row.id)
   const running = row.state === 'running'
-  const look = lookOf(row)
+  const listed = read(listedAt)
+  const elapsed = listed === null ? 0 : Math.max(0, Math.floor((read(clock) - listed) / 1000))
+  const look = lookOf(row, elapsed)
   const wordText = look.word ? (look.code !== null ? `${t(stateKey(look.word))} (${look.code})` : t(stateKey(look.word))) : null
   const ageText = look.age && (look.word === 'exited' || look.word === 'restarting') ? t('ago', { time: look.age }) : look.age
   const usage = running ? read(stats)[row.id] : undefined

@@ -18,39 +18,63 @@ export type Look = {
   problem: 'danger' | 'warning' | null
 }
 
-const UNITS: Record<string, string> = { second: 's', minute: 'm', hour: 'h', day: 'd', week: 'w', month: 'mo', year: 'y' }
+const SECONDS: Record<string, number> = { second: 1, minute: 60, hour: 3600, day: 86_400, week: 604_800, month: 2_592_000, year: 31_536_000 }
+
+/** "Less than a second" -> 0, "About an hour" -> 3600, "3 days" -> 259200. Texto desconhecido vira null. */
+export function durationSeconds(text: string): number | null {
+  const value = text.trim()
+  if (value === 'Less than a second') return 0
+  if (value === 'About a minute') return 60
+  if (value === 'About an hour') return 3600
+  const match = /^(\d+) (second|minute|hour|day|week|month|year)s?$/.exec(value)
+  return match ? Number(match[1]) * SECONDS[match[2]!]! : null
+}
+
+/** Segundos em texto curto, com as mesmas faixas do Docker: "<1s", "42s", "7m", "3h", "2d", "2w", "5mo", "2y". */
+export function compactSeconds(total: number): string {
+  const sec = Math.max(0, Math.floor(total))
+  if (sec < 1) return '<1s'
+  if (sec < 60) return `${sec}s`
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`
+  if (sec < 172_800) return `${Math.floor(sec / 3600)}h`
+  const days = Math.floor(sec / 86_400)
+  if (days < 14) return `${days}d`
+  if (days < 60) return `${Math.floor(days / 7)}w`
+  if (days < 365) return `${Math.floor(days / 30)}mo`
+  return `${Math.floor(days / 365)}y`
+}
 
 /** "Less than a second" -> "<1s", "About an hour" -> "1h", "3 days" -> "3d". Texto desconhecido passa como veio. */
 export function compactDuration(text: string): string {
-  const value = text.trim()
-  if (value === 'Less than a second') return '<1s'
-  if (value === 'About a minute') return '1m'
-  if (value === 'About an hour') return '1h'
-  const match = /^(\d+) (second|minute|hour|day|week|month|year)s?$/.exec(value)
-  return match ? `${match[1]}${UNITS[match[2]!]}` : value
+  const seconds = durationSeconds(text)
+  return seconds === null ? text.trim() : compactSeconds(seconds)
 }
 
-type Parsed = { kind: 'up' | 'exited' | 'restarting' | 'other'; age: string; code: number | null; paused: boolean; health: 'healthy' | 'unhealthy' | 'starting' | null }
+type Parsed = { kind: 'up' | 'exited' | 'restarting' | 'other'; age: number | null; code: number | null; paused: boolean; health: 'healthy' | 'unhealthy' | 'starting' | null }
 
 function parseStatus(status: string): Parsed {
   const up = /^Up (.+?)(?: \((Paused)\))?(?: \((healthy|unhealthy|health: starting)\))?$/.exec(status)
   if (up) {
     const health = up[3] === 'healthy' ? 'healthy' : up[3] === 'unhealthy' ? 'unhealthy' : up[3] ? 'starting' : null
-    return { kind: 'up', age: compactDuration(up[1]!), code: null, paused: up[2] === 'Paused', health }
+    return { kind: 'up', age: durationSeconds(up[1]!), code: null, paused: up[2] === 'Paused', health }
   }
   const gone = /^(Exited|Restarting) \((-?\d+)\) (.+) ago$/.exec(status)
   if (gone) {
-    return { kind: gone[1] === 'Exited' ? 'exited' : 'restarting', age: compactDuration(gone[3]!), code: Number(gone[2]), paused: false, health: null }
+    return { kind: gone[1] === 'Exited' ? 'exited' : 'restarting', age: durationSeconds(gone[3]!), code: Number(gone[2]), paused: false, health: null }
   }
-  return { kind: 'other', age: '', code: null, paused: false, health: null }
+  return { kind: 'other', age: null, code: null, paused: false, health: null }
 }
 
 /** Códigos que o `docker stop` produz (SIGKILL/SIGTERM) não são falha do container. */
 const CLEAN_EXIT = new Set([0, 137, 143])
 
-export function lookOf(row: { state: string; status: string }): Look {
+/**
+ * `elapsedSeconds` é o tempo desde que o texto de status foi lido: o Docker só informa o tempo
+ * no instante da consulta, então o painel soma o que passou para não mostrar "<1s" para sempre.
+ */
+export function lookOf(row: { state: string; status: string }, elapsedSeconds = 0): Look {
   const parsed = parseStatus(row.status)
-  const base = { code: parsed.code, age: parsed.age }
+  const base = { code: parsed.code, age: parsed.age === null ? '' : compactSeconds(parsed.age + Math.max(0, elapsedSeconds)) }
   switch (row.state) {
     case 'running':
       if (parsed.health === 'unhealthy') return { ...base, tone: 'danger', filled: true, word: 'unhealthy', problem: 'danger' }
