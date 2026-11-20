@@ -384,3 +384,119 @@ test('container saudável não mostra alarme nos detalhes', async () => {
   assert.ok(shows(view, 'no limit'))
   await view.unmount()
 })
+
+const KNOWN = { 'compose.projects': () => ({ projects: [{ project: 'meu-app', workingDir: '/home/a/meu-app' }] }) }
+
+test('o menu do Compose mostra Up e Down e o Up abre o terminal do projeto', async () => {
+  const seen: unknown[] = []
+  const view = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: [web, db], at: 1 }), { ...KNOWN, 'compose.run': (input: unknown) => (seen.push(input), { ok: true }) })
+  })
+  assert.equal(shows(view, 'Compose actions'), true)
+  assert.equal(view.find({ text: 'Down' }), null, 'fechado até abrir o menu')
+  await view.press({ label: 'Compose actions' })
+  await view.press({ text: 'Up' })
+  assert.deepEqual(seen, [{ project: 'meu-app', action: 'up' }])
+  await view.unmount()
+})
+
+test('o Down pergunta antes, avisa que os volumes ficam e só roda depois de confirmar', async () => {
+  const seen: unknown[] = []
+  const view = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: [web, db], at: 1 }), { ...KNOWN, 'compose.run': (input: unknown) => (seen.push(input), { ok: true }) })
+  })
+  await view.press({ label: 'Compose actions' })
+  await view.press({ text: 'Down' })
+  assert.deepEqual(seen, [], 'o clique só pergunta')
+  assert.ok(shows(view, 'Remove the 2 containers and the network of meu-app? Volumes are kept.'))
+  await view.press({ text: 'Cancel' })
+  assert.deepEqual(seen, [])
+  await view.press({ text: 'Down' })
+  await view.press({ text: 'Down' })
+  assert.deepEqual(seen, [{ project: 'meu-app', action: 'down' }])
+  assert.equal(shows(view, 'Volumes are kept'), false, 'a barra fecha ao confirmar')
+  await view.unmount()
+})
+
+test('sem os arquivos conhecidos o Up não faz nada e o erro do terminal aparece', async () => {
+  const seen: unknown[] = []
+  const view = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: [web], at: 1 }), {
+      'compose.projects': () => ({ projects: [] }),
+      'compose.run': (input: unknown) => (seen.push(input), { ok: false, code: 'no_files', error: 'The Compose files of this project are not known yet' })
+    })
+  })
+  await view.press({ label: 'Compose actions' })
+  await assert.rejects(view.press({ text: 'Up' }), /disabled/)
+  assert.deepEqual(seen, [], 'desabilitado: nem chega ao worker')
+  await view.unmount()
+  const asked = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: [web], at: 1 }), {
+      ...KNOWN,
+      'compose.run': () => ({ ok: false, code: 'no_workspace', error: 'Focus a workspace first' })
+    })
+  })
+  await asked.press({ label: 'Compose actions' })
+  await asked.press({ text: 'Up' })
+  assert.ok(shows(asked, 'Focus a workspace first'))
+  await asked.unmount()
+})
+
+test('depois de um down o projeto continua na lista, sem containers, com Up e Esquecer', async () => {
+  const seen: unknown[] = []
+  let remembered = [{ project: 'velho', workingDir: '/home/a/velho' }]
+  const view = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: [solo], at: 1 }), {
+      'compose.projects': () => ({ projects: remembered }),
+      'compose.run': (input: unknown) => (seen.push(input), { ok: true }),
+      'compose.forget': (input: unknown) => ((remembered = []), seen.push(input), { ok: true })
+    })
+  })
+  assert.ok(shows(view, 'velho'))
+  assert.ok(shows(view, 'no containers'))
+  await view.press({ label: 'Up' })
+  assert.deepEqual(seen, [{ project: 'velho', action: 'up' }])
+  await view.press({ label: 'Forget project' })
+  assert.deepEqual(seen.at(-1), { project: 'velho' })
+  assert.equal(shows(view, 'no containers'), false, 'sumiu da lista')
+  await view.unmount()
+})
+
+test('projeto que ainda tem containers não vira fantasma, e o interruptor "só em execução" os esconde', async () => {
+  const both = { 'compose.projects': () => ({ projects: [{ project: 'meu-app', workingDir: '/home/a/meu-app' }, { project: 'velho', workingDir: '/home/a/velho' }] }) }
+  const view = await mount(panel, { host: hostWith(() => ({ ok: true, containers: [web, db], at: 1 }), both) })
+  assert.equal((JSON.stringify(view.tree()).match(/no containers/g) ?? []).length, 1, 'só o velho é fantasma')
+  await view.toggle({ label: 'Running only' })
+  assert.equal(shows(view, 'no containers'), false)
+  await view.toggle({ label: 'Running only' })
+  await view.type({ label: 'Filter containers' }, 'zzz')
+  assert.equal(shows(view, 'no containers'), false, 'o filtro vale para os fantasmas também')
+  await view.unmount()
+})
+
+test('o projeto parado do workspace em foco vai para o topo', async () => {
+  const rows = [shopRow('aaa', 'alfa', '/home/a/alfa')]
+  const view = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: rows, at: 1 }), {
+      'compose.projects': () => ({ projects: [{ project: 'loja', workingDir: '/home/a/loja' }] }),
+      'workspace.context': () => ({ name: 'loja', path: '/home/a/loja' })
+    })
+  })
+  const tree = JSON.stringify(view.tree())
+  assert.ok(tree.indexOf('"loja"') < tree.indexOf('"alfa"'))
+  assert.ok(shows(view, 'this workspace'))
+  await view.unmount()
+})
+
+test('projeto parado vem depois dos grupos com containers, mesmo quando o nome viria antes', async () => {
+  const stopped: ContainerRow = { ...db, id: 'e'.repeat(12), name: 'zz', project: 'zeta', status: 'Exited (0) 1 hour ago' }
+  const view = await mount(panel, {
+    host: hostWith(() => ({ ok: true, containers: [stopped, web], at: 1 }), {
+      'compose.projects': () => ({ projects: [{ project: 'aaa-velho', workingDir: '/home/a/aaa' }] })
+    })
+  })
+  const tree = JSON.stringify(view.tree())
+  assert.ok(tree.indexOf('"zeta"') < tree.indexOf('"aaa-velho"'), 'o fantasma fica por último')
+  assert.ok(tree.indexOf('"meu-app"') < tree.indexOf('"zeta"'), 'mais containers rodando vêm antes')
+  await view.unmount()
+})

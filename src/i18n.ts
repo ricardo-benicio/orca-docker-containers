@@ -93,7 +93,16 @@ const en = {
   detailLastCheck: 'Last health check',
   detailError: 'Error',
   detailMemoryLimit: 'Memory limit',
-  detailNoLimit: 'no limit'
+  detailNoLimit: 'no limit',
+  composeMore: 'Compose actions',
+  composeUp: 'Up',
+  composeDown: 'Down',
+  composeUpHint: 'Create and start the services from the Compose files, in a terminal',
+  composeNoFiles: 'The Compose files of this project are not known yet',
+  confirmDownOne: 'Remove the container and the network of {project}? Volumes are kept.',
+  confirmDownMany: 'Remove the {count} containers and the network of {project}? Volumes are kept.',
+  forgetProject: 'Forget project',
+  noContainersYet: 'no containers'
 }
 
 export type Key = keyof typeof en
@@ -192,7 +201,16 @@ const pt: Record<Key, string> = {
   detailLastCheck: 'Último health check',
   detailError: 'Erro',
   detailMemoryLimit: 'Limite de memória',
-  detailNoLimit: 'sem limite'
+  detailNoLimit: 'sem limite',
+  composeMore: 'Ações do Compose',
+  composeUp: 'Up',
+  composeDown: 'Down',
+  composeUpHint: 'Cria e inicia os serviços a partir dos arquivos do Compose, em um terminal',
+  composeNoFiles: 'Os arquivos do Compose deste projeto ainda não são conhecidos',
+  confirmDownOne: 'Remover o container e a rede de {project}? Os volumes são mantidos.',
+  confirmDownMany: 'Remover os {count} containers e a rede de {project}? Os volumes são mantidos.',
+  forgetProject: 'Esquecer projeto',
+  noContainersYet: 'sem containers'
 }
 
 export function translate(locale: string | undefined, key: Key, vars: Record<string, string | number> = {}): string {

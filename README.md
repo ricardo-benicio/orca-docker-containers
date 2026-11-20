@@ -15,6 +15,11 @@ something starts or stops.
   something from a terminal. A 30-second refresh is kept as a safety net.
 - **Status at a glance.** Two compact lines per container: a coloured dot (filled when running, hollow when stopped), the image, a short uptime like `3h` and the published ports. A state word appears only when it matters (`unhealthy`, `restarting`, `paused`, `exited (3)`), and containers that need attention get a tinted row.
 - **CPU and memory.** Each running container shows its CPU and memory, refreshed every 5 seconds while the panel is visible. Memory above 75% of the container's limit turns amber and above 90% red; CPU above 80% turns amber. Turn it off in Settings → Plugins if you prefer fewer Docker calls.
+- **Compose Up and Down.** The `...` button in a project header opens **Up** (`docker compose up -d`
+  with the files Docker recorded when you first started it) and **Down** (stops and removes the
+  containers and the network, never the volumes, after you confirm). Both run in an Orca terminal, so
+  you see the progress, the image downloads and any error. A project stays in the list after a
+  `down`, with an Up button, until you click Forget.
 - **Actions.** Start, stop and restart a container, or a whole Compose project at once, with the project buttons in the group header. Stopping or restarting a whole project asks for confirmation first (starting does not). Click the project name to collapse it.
 - **Logs.** The last 200 lines of any container, right in the panel, or follow them live in an Orca terminal.
 - **Shell.** Open a shell inside a running container in a new Orca terminal (bash if the image has it, otherwise sh).
@@ -28,6 +33,8 @@ something starts or stops.
 - **English and Portuguese**, following Orca's language.
 
 ![CPU and memory per container](assets/screenshots/live-status.png)
+
+![A project stays in the list after docker compose down](assets/screenshots/compose.png)
 
 ## Requirements
 
@@ -54,7 +61,7 @@ icon in the right sidebar tabs.
 ## Security
 
 This plugin runs a Node worker with your user's access (`trusted-worker`), which is why Orca asks for
-explicit approval. Version 0.3.0 asked for more than 0.2.0; 0.4.x to 0.7.x ask for nothing new. Here
+explicit approval. Version 0.3.0 asked for more than 0.2.0; 0.4.x to 0.8.x ask for nothing new. Here
 is what each permission is used for, and nothing else:
 
 | Permission | Used for |
@@ -64,15 +71,19 @@ is what each permission is used for, and nothing else:
 | `workspace:read` | Finding the focused workspace: its id (to open terminals there) and its folder (to highlight the Compose project that lives in it). The worker reads your workspace list to find that one; only its name and folder reach the panel. |
 | `notifications:show` | The crash, out-of-memory and unhealthy notifications |
 | `settings:own` | Reading this plugin's own settings |
-| `storage:own` | Remembering the panel's filter and collapsed groups |
+| `storage:own` | Remembering the panel's filter and collapsed groups, and where your Compose projects live (folder and files, up to 30 projects), so Up still works after a Down |
 
 What the worker runs:
 
 - `docker ps`, `docker inspect`, `docker logs`, `docker events`, `docker stats --no-stream` and `docker start|stop|restart <id…>`,
   through `execFile` (no shell).
-- In a terminal, only `docker exec -it <id> sh -c '…bash or sh…'` and `docker logs -f --tail 200 <id>`.
-  The id is checked to be hexadecimal, and the docker command and context you configure are checked
-  to contain only letters, digits and `./_+@-`, so nothing can be injected into the terminal line.
+- In a terminal, only `docker exec -it <id> sh -c '…bash or sh…'`, `docker logs -f --tail 200 <id>`,
+  `docker compose -p '<project>' --project-directory '<dir>' -f '<file>'… up -d` and
+  `docker compose -p '<project>' down`. The id is checked to be hexadecimal, and the docker command
+  and context you configure are checked to contain only letters, digits and `./_+@-`, so nothing can
+  be injected into the terminal line. The Compose folder and files come from labels Docker stored on
+  your containers; each path must be absolute, short and free of quotes and control characters, and
+  goes between single quotes. `down` never uses `-v` or `--rmi`, so volumes and images stay.
 - It rejects invalid ids, project names and actions before calling Docker.
 - It never deletes containers, images or volumes, and never sends environment variables or labels
   to the panel: from the labels it keeps only the Compose project name and folder. The details view

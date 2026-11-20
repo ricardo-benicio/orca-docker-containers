@@ -70,6 +70,8 @@ export type ContainerStats = {
 
 export type StatsResult = { ok: true; stats: Record<string, ContainerStats> } | { ok: false; error: string }
 
+export type ComposeAction = 'up' | 'down'
+
 export type TerminalKind = 'shell' | 'logs'
 
 declare module 'orca' {
@@ -85,6 +87,15 @@ declare module 'orca' {
     'project.action': {
       input: { project: string; action: Action }
       output: { ok: boolean; count: number; error?: string }
+    }
+    /** Projetos Compose que o plugin já viu, para oferecer o Up mesmo depois de um down. */
+    'compose.projects': { output: { projects: { project: string; workingDir: string }[] } }
+    /** Esquece um projeto lembrado. */
+    'compose.forget': { input: { project: string }; output: { ok: boolean } }
+    /** Abre um terminal do Orca rodando `docker compose up -d` ou `down` para o projeto. */
+    'compose.run': {
+      input: { project: string; action: ComposeAction }
+      output: { ok: boolean; code?: 'no_workspace' | 'no_files' | 'failed'; error?: string }
     }
     /** Nome e pasta do workspace em foco no Orca; vazios quando nenhum está em foco. */
     'workspace.context': { output: WorkspaceContext }

@@ -299,3 +299,107 @@ test('sem workspace em foco ou sem permissão, devolve vazio e não derruba o pa
     await finish(denied)
   }
 })
+
+const composeRow = JSON.stringify({
+  ID: ID,
+  Names: 'loja-web-1',
+  Image: 'nginx',
+  State: 'running',
+  Status: 'Up 1 hour',
+  Ports: '',
+  Labels: 'com.docker.compose.project=loja,com.docker.compose.project.config_files=/home/a/loja/compose.yaml,com.docker.compose.project.working_dir=/home/a/loja'
+})
+
+/** Um docker em que o projeto "loja" tem containers até `down()` ser chamado. */
+function composeDocker() {
+  const state = { up: true }
+  setRunner(async (args) => (args[0] === 'ps' ? (state.up ? `${composeRow}\n` : '') : ''))
+  return { down: () => void (state.up = false) }
+}
+
+const LOJA_UP = "docker compose -p 'loja' --project-directory '/home/a/loja' -f '/home/a/loja/compose.yaml' up -d"
+
+test('lembra o projeto compose visto na lista e o oferece mesmo depois do down', async () => {
+  const docker = composeDocker()
+  fakeWatcher()
+  const worker = await mount({ results: { 'workspace.readContext': FOCUS, 'terminal.create': { terminalId: 't-1' } } })
+  try {
+    await worker.request('containers.list')
+    assert.deepEqual(await worker.request('compose.projects'), { projects: [{ project: 'loja', workingDir: '/home/a/loja' }] })
+    assert.equal(worker.host.data().storage.composeProjects !== undefined, true, 'ficou gravado no storage')
+    docker.down()
+    const after = await worker.request('containers.list')
+    assert.equal(after.ok && after.containers.length, 0)
+    assert.equal((await worker.request('compose.projects')).projects.length, 1, 'o projeto continua lembrado sem containers')
+  } finally {
+    await finish(worker)
+  }
+})
+
+test('o Up abre um terminal com os arquivos que o docker guardou, e o Down só com o nome', async () => {
+  composeDocker()
+  fakeWatcher()
+  const worker = await mount({ results: { 'workspace.readContext': FOCUS, 'terminal.create': { terminalId: 't-1' } } })
+  try {
+    await worker.request('containers.list')
+    assert.deepEqual(await worker.request('compose.run', { project: 'loja', action: 'up' }), { ok: true })
+    assert.deepEqual(await worker.request('compose.run', { project: 'loja', action: 'down' }), { ok: true })
+    assert.deepEqual(worker.host.callsOf('terminal.create'), [
+      { workspaceId: 'ws-1', title: 'compose up · loja', command: LOJA_UP },
+      { workspaceId: 'ws-1', title: 'compose down · loja', command: "docker compose -p 'loja' down" }
+    ])
+  } finally {
+    await finish(worker)
+  }
+})
+
+test('o Up de um projeto desconhecido explica em vez de adivinhar; o Down funciona só pelo nome', async () => {
+  composeDocker()
+  fakeWatcher()
+  const worker = await mount({ results: { 'workspace.readContext': FOCUS, 'terminal.create': { terminalId: 't-1' } } })
+  try {
+    const up = await worker.request('compose.run', { project: 'nunca-visto', action: 'up' })
+    assert.equal(up.ok, false)
+    assert.equal(up.code, 'no_files')
+    assert.equal(worker.host.callsOf('terminal.create').length, 0)
+    assert.equal((await worker.request('compose.run', { project: 'nunca-visto', action: 'down' })).ok, true)
+  } finally {
+    await finish(worker)
+  }
+})
+
+test('compose recusa entrada inválida e avisa quando não há workspace em foco', async () => {
+  composeDocker()
+  fakeWatcher()
+  const worker = await mount({ results: { 'workspace.readContext': null } })
+  try {
+    await assert.rejects(worker.request('compose.run', { project: "x'; id #", action: 'down' }))
+    await assert.rejects(worker.request('compose.run', { project: '--all', action: 'down' }))
+    await assert.rejects(worker.request('compose.run', { project: 'loja', action: 'rm' as 'up' }))
+    await assert.rejects(worker.request('compose.forget', { project: '--all' }))
+    const none = await worker.request('compose.run', { project: 'loja', action: 'down' })
+    assert.equal(none.ok, false)
+    assert.equal(none.code, 'no_workspace')
+    assert.equal(worker.host.callsOf('terminal.create').length, 0)
+  } finally {
+    await finish(worker)
+  }
+})
+
+test('esquecer um projeto o tira da lista, e registro adulterado no storage é ignorado', async () => {
+  setRunner(async () => '')
+  fakeWatcher()
+  const evil = { project: 'mal', dir: '/a', files: ["/a'; rm -rf ~ #"], envFiles: [], seenAt: 1 }
+  const good = { project: 'velho', dir: '/home/a/velho', files: ['/home/a/velho/compose.yaml'], envFiles: [], seenAt: 1 }
+  const worker = await mount({ storage: { composeProjects: [evil, good] as never }, results: { 'workspace.readContext': FOCUS, 'terminal.create': { terminalId: 't-1' } } })
+  try {
+    assert.deepEqual((await worker.request('compose.projects')).projects.map((p) => p.project), ['velho'])
+    assert.deepEqual(await worker.request('compose.forget', { project: 'velho' }), { ok: true })
+    assert.deepEqual((await worker.request('compose.projects')).projects, [])
+    assert.deepEqual(worker.host.data().storage.composeProjects, [])
+    const up = await worker.request('compose.run', { project: 'mal', action: 'up' })
+    assert.equal(up.code, 'no_files')
+  } finally {
+    await finish(worker)
+  }
+})

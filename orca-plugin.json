@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "docker-containers",
   "name": "Docker Containers",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Docker containers in the Orca sidebar, grouped by Compose project: live status, logs, shell, start/stop/restart, status bar counter and crash notifications.",
   "engines": {
     "orca": ">=1.4.248"
@@ -131,6 +131,12 @@
       "caption": "Live CPU and memory per container: memory near the limit turns red, high CPU turns amber",
       "theme": "dark",
       "alt": "Docker panel where each running container shows CPU and memory; one near its memory limit is red and one at 98 percent CPU is amber"
+    },
+    {
+      "path": "assets/screenshots/compose.png",
+      "caption": "Compose Up and Down in a terminal; a stopped project stays listed, ready for Up",
+      "theme": "dark",
+      "alt": "Docker panel with a running project and, below it, a project called blog with no containers and Up and Forget buttons"
     }
   ]
 }

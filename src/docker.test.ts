@@ -14,6 +14,8 @@ import {
   isValidId,
   isValidProject,
   listContainers,
+  parseComposeLabels,
+  parseDetailed,
   parseLine,
   parseWorkingDir,
   parseSize,
@@ -204,4 +206,25 @@ test('o diagnóstico traz o erro de execução e o último health check, limpos 
 test('o diagnóstico nunca leva ambiente nem labels', () => {
   const info = parseInspect(diag({ Status: 'running' }))
   assert.equal(JSON.stringify(info).includes('segredo'), false)
+})
+
+test('lê pasta, arquivos e .env do compose, mesmo com vírgulas e espaços nos caminhos', () => {
+  const labels = 'a=b,com.docker.compose.project=shop,com.docker.compose.project.config_files=/h/a b/compose.yaml,/h/override.yaml,com.docker.compose.project.environment_file=/h/.env,com.docker.compose.project.working_dir=/h/a b,com.docker.compose.service=web'
+  assert.deepEqual(parseComposeLabels(labels), { dir: '/h/a b', files: ['/h/a b/compose.yaml', '/h/override.yaml'], envFiles: ['/h/.env'] })
+  assert.deepEqual(parseComposeLabels('com.docker.compose.project.config_files=/x/c.yaml'), { dir: null, files: ['/x/c.yaml'], envFiles: [] })
+  assert.deepEqual(parseComposeLabels('a=b'), { dir: null, files: [], envFiles: [] })
+  assert.deepEqual(parseComposeLabels('x=com.docker.compose.project.config_files=/nao/e/label'), { dir: null, files: [], envFiles: [] })
+})
+
+test('a lista detalhada separa o que vai ao painel do que fica no worker', () => {
+  const out = [
+    JSON.stringify({ ID: 'abc123def456', Names: 'a', Labels: 'com.docker.compose.project=p,com.docker.compose.project.config_files=/h/c.yaml,com.docker.compose.project.working_dir=/h' }),
+    'lixo',
+    JSON.stringify({ ID: 'fff123def456', Names: 'solo', Labels: '' })
+  ].join('\n')
+  const found = parseDetailed(out)
+  assert.equal(found.length, 2)
+  assert.equal('compose' in found[0]!.row, false, 'os arquivos não entram na linha enviada ao painel')
+  assert.equal(JSON.stringify(found[0]!.row).includes('c.yaml'), false)
+  assert.deepEqual(found[0]!.compose.files, ['/h/c.yaml'])
 })

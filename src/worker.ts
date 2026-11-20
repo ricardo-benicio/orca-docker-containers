@@ -2,6 +2,7 @@
 // O Orca o mantém ligado enquanto o plugin estiver habilitado (por causa do item da barra de status).
 import type { OrcaWorkerApi } from 'orca/worker'
 import { alertFor, shouldSend } from './alerts'
+import { composeCommand, forget, loadRefs, remember, sameRefs, type ComposeRef } from './compose'
 import { DEFAULTS, normalizeConfig, type Config } from './config'
 import {
   configureDocker,
@@ -14,7 +15,8 @@ import {
   isValidAction,
   isValidId,
   isValidProject,
-  listContainers,
+  type DetailedRow,
+  listDetailed,
   projectAction,
   shellCommand
 } from './docker'
@@ -57,6 +59,7 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   let config: Config = DEFAULTS
   let watcher: Watcher | null = null
   let snapshot: ContainerRow[] = []
+  let refs: ComposeRef[] = []
   const lastAlert = new Map<string, number>()
   // O worker não vê o idioma do Orca; o do sistema é a melhor aproximação para os avisos.
   const locale = Intl.DateTimeFormat().resolvedOptions().locale
@@ -79,9 +82,27 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
     }
   }
 
+  const saveRefs = async (next: ComposeRef[]): Promise<void> => {
+    const changed = !sameRefs(refs, next)
+    refs = next
+    if (!changed) return
+    try {
+      await orca.storage.set('composeProjects', next as never)
+    } catch {
+      // Sem armazenamento: o Up só fica disponível enquanto o projeto tiver containers.
+    }
+  }
+
+  /** Guarda onde cada projeto Compose mora, para o Up continuar possível depois de um down. */
+  const learn = async (found: DetailedRow[]): Promise<void> => {
+    await saveRefs(remember(refs, found, Date.now()))
+  }
+
   const refreshSnapshot = async (): Promise<void> => {
     try {
-      snapshot = await listContainers()
+      const found = await listDetailed()
+      snapshot = found.map((entry) => entry.row)
+      void learn(found)
       if (!config.statusBar) return void (await setStatusBar({ visible: false }))
       const up = snapshot.filter((c) => c.state === 'running').length
       await setStatusBar({
@@ -128,6 +149,11 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
   }
 
   await loadConfig()
+  try {
+    refs = loadRefs(await orca.storage.get('composeProjects'))
+  } catch {
+    refs = []
+  }
   startWatcher()
   void refreshSnapshot()
   const timer = setInterval(() => void refreshSnapshot(), SAFETY_REFRESH_MS)
@@ -159,8 +185,10 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
 
   orca.panels.handle('containers.list', async (_input, { signal }) => {
     try {
-      const containers = await listContainers(signal)
+      const found = await listDetailed(signal)
+      const containers = found.map((entry) => entry.row)
       snapshot = containers
+      void learn(found)
       return { ok: true as const, containers, at: Date.now() }
     } catch (error) {
       const code = error instanceof DockerError ? error.code : ('unknown' as const)
@@ -227,20 +255,39 @@ export default async function activate(orca: OrcaWorkerApi): Promise<void> {
     }
   })
 
-  orca.panels.handle('containers.terminal', async (input) => {
-    if (!isValidId(input.id) || (input.kind !== 'shell' && input.kind !== 'logs')) throw invalid('invalid container or terminal')
+  /** Abre um terminal no workspace em foco rodando `command`. */
+  const openTerminal = async (title: string, command: string) => {
     try {
       const context = await orca.host.call('workspace.readContext')
       if (!context?.workspaceId) return { ok: false, code: 'no_workspace' as const, error: t('noWorkspace') }
-      const name = cleanTitle(input.name, input.id)
-      await orca.host.call('terminal.create', {
-        workspaceId: context.workspaceId,
-        title: input.kind === 'shell' ? `shell · ${name}` : `logs · ${name}`,
-        command: input.kind === 'shell' ? shellCommand(input.id) : followLogsCommand(input.id)
-      })
+      await orca.host.call('terminal.create', { workspaceId: context.workspaceId, title, command })
       return { ok: true }
     } catch (error) {
       return { ok: false, code: 'failed' as const, error: message(error) }
     }
+  }
+
+  orca.panels.handle('containers.terminal', async (input) => {
+    if (!isValidId(input.id) || (input.kind !== 'shell' && input.kind !== 'logs')) throw invalid('invalid container or terminal')
+    const name = cleanTitle(input.name, input.id)
+    return openTerminal(input.kind === 'shell' ? `shell · ${name}` : `logs · ${name}`, input.kind === 'shell' ? shellCommand(input.id) : followLogsCommand(input.id))
+  })
+
+  orca.panels.handle('compose.projects', async () => ({
+    projects: refs.map((ref) => ({ project: ref.project, workingDir: ref.dir }))
+  }))
+
+  orca.panels.handle('compose.forget', async (input) => {
+    if (!isValidProject(input.project)) throw invalid('invalid project')
+    await saveRefs(forget(refs, input.project))
+    return { ok: true }
+  })
+
+  orca.panels.handle('compose.run', async (input) => {
+    if (!isValidProject(input.project) || (input.action !== 'up' && input.action !== 'down')) throw invalid('invalid project or action')
+    const ref = refs.find((candidate) => candidate.project === input.project) ?? null
+    const command = composeCommand(input.action, input.project, ref)
+    if (!command) return { ok: false, code: 'no_files' as const, error: t('composeNoFiles') }
+    return openTerminal(`compose ${input.action} · ${cleanTitle(input.project, input.project)}`, command)
   })
 }

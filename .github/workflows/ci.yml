@@ -26,4 +26,4 @@ jobs:
             if (tag && tag !== 'v' + m.version) { console.error('tag', tag, 'does not match version', m.version); process.exit(1); }
           "
       - name: Unit tests (parsers, docker commands, validation)
-        run: node --test src/docker.test.ts src/i18n.test.ts src/config.test.ts src/alerts.test.ts src/format.test.ts src/workspace.test.ts
+        run: node --test src/docker.test.ts src/i18n.test.ts src/config.test.ts src/alerts.test.ts src/format.test.ts src/workspace.test.ts src/compose.test.ts

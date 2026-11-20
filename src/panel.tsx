@@ -32,6 +32,7 @@ import { cpuTone, diagTone, formatBytes, formatCpu, formatUtc, lookOf, memoryTon
 import { isInside } from './workspace'
 import { translate, type Key } from './i18n'
 import type { Action, ContainerInfo, ContainerRow, ContainerStats, DockerErrorCode, TerminalKind, WorkspaceContext } from './protocol'
+import type { ComposeAction } from './protocol'
 
 /** Rede de segurança: os eventos do Docker já atualizam a lista na hora. Ajustável nas configurações. */
 const DEFAULT_POLL_SECONDS = 30
@@ -43,6 +44,10 @@ const containers = atom<ContainerRow[] | null>(null)
 const stats = atom<Record<string, ContainerStats>>({})
 /** Relógio do próprio painel: o tempo ativo vem do texto do Docker no instante da consulta e precisa andar sozinho. */
 const workspace = atom<WorkspaceContext>({ name: null, path: null })
+/** Projetos Compose que o worker já viu; os que perderam todos os containers aparecem para o Up. */
+const remembered = atom<{ project: string; workingDir: string }[]>([])
+/** Projetos com a linha de ações do Compose (Up/Down) aberta. */
+const composeOpen = atom<readonly string[]>([])
 const clock = atom(Date.now())
 const listedAt = atom<number | null>(null)
 const failure = atom<{ code: DockerErrorCode; error: string } | null>(null)
@@ -51,7 +56,7 @@ const busy = atom<readonly string[]>([])
 const logs = atom<{ id: string; name: string; text: string } | null>(null)
 const notice = atom<string | null>(null)
 /** Parar ou reiniciar o projeto inteiro pede confirmação; só um pedido por vez. */
-const confirming = atom<{ project: string; action: 'stop' | 'restart' } | null>(null)
+const confirming = atom<{ project: string; action: 'stop' | 'restart' | 'down' } | null>(null)
 const detail = atom<{ row: ContainerRow; info: ContainerInfo | null; error: string | null } | null>(null)
 
 const query = atom('query', '', { persist: 'plugin' })
@@ -84,6 +89,31 @@ const groups = derived(() => {
     .sort(([a, rowsA], [b, rowsB]) => Number(here(b, rowsB)) - Number(here(a, rowsA)) || up(rowsB) - up(rowsA) || a.localeCompare(b))
 })
 
+type Entry = { kind: 'group'; key: string; rows: ContainerRow[] } | { kind: 'ghost'; key: string; workingDir: string }
+
+/** Grupos com containers e, depois de um down, os projetos lembrados sem nenhum; o do workspace em foco vem primeiro. */
+const entries = derived((): Entry[] => {
+  const real = read(groups)
+  const present = new Set((read(containers) ?? []).map((c) => c.project).filter((p): p is string => p !== null))
+  const text = read(query).trim().toLowerCase()
+  const ghosts = read(onlyRunning)
+    ? []
+    : read(remembered).filter((r) => !present.has(r.project) && (!text || r.project.toLowerCase().includes(text)))
+  const here = (e: Entry) => (e.kind === 'ghost' ? isInside(e.workingDir, read(workspace).path) : e.key !== STANDALONE && isHere(e.rows))
+  const up = (e: Entry) => (e.kind === 'ghost' ? 0 : e.rows.filter((c) => c.state === 'running').length)
+  const all: Entry[] = [
+    ...real.map(([key, rows]): Entry => ({ kind: 'group', key, rows })),
+    ...ghosts.map((r): Entry => ({ kind: 'ghost', key: r.project, workingDir: r.workingDir }))
+  ]
+  return all.sort(
+    (a, b) =>
+      Number(here(b)) - Number(here(a)) ||
+      Number(a.kind === 'ghost') - Number(b.kind === 'ghost') ||
+      up(b) - up(a) ||
+      a.key.localeCompare(b.key)
+  )
+})
+
 function errorText(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
 }
@@ -95,6 +125,7 @@ async function refresh(): Promise<void> {
       set(containers, result.containers)
       set(updatedAt, result.at)
       set(listedAt, Date.now())
+      void refreshRemembered()
       set(clock, Date.now())
       set(failure, null)
     } else {
@@ -102,6 +133,32 @@ async function refresh(): Promise<void> {
     }
   } catch (cause) {
     set(failure, { code: 'unknown', error: errorText(cause) })
+  }
+}
+
+async function refreshRemembered(): Promise<void> {
+  try {
+    set(remembered, (await plugin.request('compose.projects')).projects)
+  } catch {
+    set(remembered, [])
+  }
+}
+
+/** Up e Down rodam num terminal do Orca: o progresso, os downloads e os erros aparecem lá. */
+async function composeRun(project: string, action: ComposeAction): Promise<void> {
+  try {
+    const result = await plugin.request('compose.run', { project, action })
+    set(notice, result.ok ? null : (result.error ?? t('terminalFailed')))
+  } catch (cause) {
+    set(notice, errorText(cause))
+  }
+}
+
+async function forgetProject(project: string): Promise<void> {
+  try {
+    await plugin.request('compose.forget', { project })
+  } finally {
+    await refreshRemembered()
   }
 }
 
@@ -423,24 +480,25 @@ function ProjectActions({ project, rows }: { project: string; rows: ContainerRow
 }
 
 /** Pergunta antes de derrubar o projeto: um clique errado no cabeçalho não pode parar a pilha toda. */
-function ConfirmBar({ project, rows, action }: { project: string; rows: ContainerRow[]; action: 'stop' | 'restart' }) {
+function ConfirmBar({ project, rows, action }: { project: string; rows: ContainerRow[]; action: 'stop' | 'restart' | 'down' }) {
   const count = action === 'stop' ? rows.filter((row) => row.state === 'running').length : rows.length
-  const key = `confirm${action === 'stop' ? 'Stop' : 'Restart'}${count === 1 ? 'One' : 'Many'}` as Key
+  const key = `confirm${action === 'stop' ? 'Stop' : action === 'down' ? 'Down' : 'Restart'}${count === 1 ? 'One' : 'Many'}` as Key
+  const tone = action === 'restart' ? 'warning' : 'danger'
   return (
-    <Box background={action === 'stop' ? 'danger' : 'warning'} radius="sm" padding="xs">
+    <Box background={tone} radius="sm" padding="xs">
       <Stack gap="xs">
         <Text size="xs">{t(key, { count, project })}</Text>
         <Row gap="xs">
           <Button
             size="xs"
             variant="solid"
-            tone={action === 'stop' ? 'danger' : 'warning'}
+            tone={tone}
             onPress={() => {
               set(confirming, null)
-              return actProject(project, rows, action)
+              return action === 'down' ? composeRun(project, 'down') : actProject(project, rows, action)
             }}
           >
-            {action === 'stop' ? t('stopAll') : t('restartAll')}
+            {action === 'stop' ? t('stopAll') : action === 'down' ? t('composeDown') : t('restartAll')}
           </Button>
           <Button size="xs" variant="ghost" onPress={() => set(confirming, null)}>
             {t('cancel')}
@@ -451,11 +509,28 @@ function ConfirmBar({ project, rows, action }: { project: string; rows: Containe
   )
 }
 
+/** Up e Down do Compose: abrem um terminal. O Up precisa dos arquivos que o worker já viu; o Down só do nome. */
+function ComposeRow({ project, rows }: { project: string; rows: ContainerRow[] }) {
+  const known = read(remembered).some((item) => item.project === project)
+  return (
+    <Row gap="xs" wrap>
+      <Button size="xs" variant="outline" icon="rocket" disabled={!known} tooltip={known ? t('composeUpHint') : t('composeNoFiles')} onPress={() => composeRun(project, 'up')}>
+        {t('composeUp')}
+      </Button>
+      <Button size="xs" variant="outline" tone="danger" icon="delete" disabled={rows.length === 0} onPress={() => set(confirming, { project, action: 'down' })}>
+        {t('composeDown')}
+      </Button>
+    </Row>
+  )
+}
+
 /** Cabeçalho do grupo: recolhe/expande à esquerda, ações do projeto à direita, na mesma linha. */
 function GroupHeader({ id, label, group, open, here }: { id: string; label: string; group: ContainerRow[]; open: boolean; here: boolean }) {
   const up = group.filter((c) => c.state === 'running').length
   const pending = read(confirming)
   const asking = pending?.project === id ? pending.action : null
+  const compose = id !== STANDALONE
+  const composeShown = compose && read(composeOpen).includes(id)
   return (
     <Stack gap="xs">
       <Row justify="between" align="center" gap="xs">
@@ -466,9 +541,41 @@ function GroupHeader({ id, label, group, open, here }: { id: string; label: stri
           <Text muted size="xs">{`${up}/${group.length}`}</Text>
           {here ? <Badge tone="accent">{t('thisWorkspace')}</Badge> : null}
         </Row>
-        {id === STANDALONE || asking ? null : <ProjectActions project={id} rows={group} />}
+        {compose && !asking ? (
+          <Row gap="none">
+            <ProjectActions project={id} rows={group} />
+            <IconButton
+              icon="more"
+              label={t('composeMore')}
+              tooltip={t('composeMore')}
+              size="xs"
+              variant="ghost"
+              onPress={() => update(composeOpen, (keys) => (keys.includes(id) ? keys.filter((k) => k !== id) : [...keys, id]))}
+            />
+          </Row>
+        ) : null}
       </Row>
+      {composeShown && !asking ? <ComposeRow project={id} rows={group} /> : null}
       {asking ? <ConfirmBar project={id} rows={group} action={asking} /> : null}
+    </Stack>
+  )
+}
+
+/** Projeto que o plugin já viu, mas sem nenhum container (por exemplo depois de um down): só dá para subir ou esquecer. */
+function GhostHeader({ project, here }: { project: string; here: boolean }) {
+  return (
+    <Stack gap="xs">
+      <Row justify="between" align="center" gap="xs">
+        <Row gap="xs" align="center">
+          <Text weight="semibold" size="sm">{project}</Text>
+          <Text muted size="xs">{t('noContainersYet')}</Text>
+          {here ? <Badge tone="accent">{t('thisWorkspace')}</Badge> : null}
+        </Row>
+        <Row gap="none">
+          <IconButton icon="rocket" label={t('composeUp')} tooltip={t('composeUpHint')} size="xs" variant="ghost" onPress={() => composeRun(project, 'up')} />
+          <IconButton icon="close" label={t('forgetProject')} tooltip={t('forgetProject')} size="xs" variant="ghost" onPress={() => forgetProject(project)} />
+        </Row>
+      </Row>
     </Stack>
   )
 }
@@ -481,7 +588,7 @@ export default function Panel() {
   const detailView = read(detail)
   const message = read(notice)
   const closed = read(collapsed)
-  const rows = read(groups)
+  const rows = read(entries)
   const total = all?.length ?? 0
   const up = all?.filter((c) => c.state === 'running').length ?? 0
   const errKey = problem ? (`err${problem.code[0]?.toUpperCase()}${problem.code.slice(1)}` as Key) : null
@@ -536,7 +643,11 @@ export default function Panel() {
           <EmptyState icon="package" title={t('noContainers')} description={total === 0 ? t('dockerEmpty') : t('filterEmpty')} />
         ) : null}
 
-        {rows.map(([key, group]) => {
+        {rows.map((entry) => {
+          if (entry.kind === 'ghost') {
+            return <GhostHeader key={`ghost:${entry.key}`} project={entry.key} here={isInside(entry.workingDir, read(workspace).path)} />
+          }
+          const { key, rows: group } = entry
           const label = key === STANDALONE ? t('standalone') : key
           const open = !closed.includes(key)
           return (

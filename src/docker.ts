@@ -8,6 +8,8 @@ const PROJECT_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/
 const ACTIONS = new Set(['start', 'stop', 'restart'])
 const PROJECT_LABEL = 'com.docker.compose.project'
 const WORKDIR_LABEL = 'com.docker.compose.project.working_dir'
+const FILES_LABEL = 'com.docker.compose.project.config_files'
+const ENVFILE_LABEL = 'com.docker.compose.project.environment_file'
 
 export class DockerError extends Error {
   readonly code: DockerErrorCode
@@ -56,6 +58,25 @@ export function parseWorkingDir(labels: string): string | null {
   return null
 }
 
+/**
+ * Valor de um label cujo conteúdo pode ter vírgulas (lista de arquivos): vai até o próximo
+ * `chave=` ou o fim. Um caminho nunca começa como `chave=`, então a emenda é segura.
+ */
+function labelList(labels: string, key: string): string[] {
+  const at = labels.startsWith(`${key}=`) ? 0 : labels.indexOf(`,${key}=`) + 1
+  if (at === 0 && !labels.startsWith(`${key}=`)) return []
+  const rest = labels.slice(at + key.length + 1)
+  const end = rest.search(/,[a-zA-Z0-9][\w.-]*=/)
+  return (end === -1 ? rest : rest.slice(0, end)).split(',').map((v) => v.trim()).filter(Boolean)
+}
+
+export type ComposeLabels = { dir: string | null; files: string[]; envFiles: string[] }
+
+/** Onde o projeto Compose mora e quais arquivos o subiram, como o Docker gravou nos labels. */
+export function parseComposeLabels(labels: string): ComposeLabels {
+  return { dir: parseWorkingDir(labels), files: labelList(labels, FILES_LABEL), envFiles: labelList(labels, ENVFILE_LABEL) }
+}
+
 export function parseLine(line: string): ContainerRow | null {
   let raw: Record<string, unknown>
   try {
@@ -76,6 +97,26 @@ export function parseLine(line: string): ContainerRow | null {
     project: parseProject(text('Labels')),
     workingDir: parseWorkingDir(text('Labels'))
   }
+}
+
+export type DetailedRow = { row: ContainerRow; compose: ComposeLabels }
+
+/** Como `parseList`, mas guarda também os labels do Compose, que ficam no worker e não vão para o painel. */
+export function parseDetailed(stdout: string): DetailedRow[] {
+  const out: DetailedRow[] = []
+  for (const line of stdout.split('\n')) {
+    const row = parseLine(line.trim())
+    if (!row) continue
+    let labels = ''
+    try {
+      const raw = JSON.parse(line.trim()) as Record<string, unknown>
+      labels = typeof raw.Labels === 'string' ? raw.Labels : ''
+    } catch {
+      // parseLine já recusou a linha acima.
+    }
+    out.push({ row, compose: parseComposeLabels(labels) })
+  }
+  return out
 }
 
 export function parseList(stdout: string): ContainerRow[] {
@@ -152,6 +193,10 @@ export function setRunner(next?: Runner): void {
 
 export async function listContainers(signal?: AbortSignal): Promise<ContainerRow[]> {
   return parseList(await runner(['ps', '-a', '--format', '{{json .}}'], signal))
+}
+
+export async function listDetailed(signal?: AbortSignal): Promise<DetailedRow[]> {
+  return parseDetailed(await runner(['ps', '-a', '--format', '{{json .}}'], signal))
 }
 
 export async function containerAction(id: string, action: Action, signal?: AbortSignal): Promise<void> {
