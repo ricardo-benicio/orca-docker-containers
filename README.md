@@ -4,6 +4,11 @@ See and control your Docker containers without leaving [Orca](https://onorca.dev
 right sidebar lists every container, grouped by Docker Compose project, and updates the moment
 something starts or stops.
 
+> **Install it now:** in Orca, open Settings → Plugins → Add plugin → From a Git URL, paste
+> `https://github.com/ricardo-benicio/orca-docker-containers`, review the access it asks for and
+> enable it. It may not show up in Orca's community catalog yet, but installing from this URL always
+> works and gives you the newest release. More options in [Install](#install).
+
 ![Every container state at a glance](assets/screenshots/grouped.png)
 
 ## Features
@@ -54,6 +59,10 @@ Or from the terminal:
 ```sh
 orca plugin install ricardo-benicio/orca-docker-containers
 ```
+
+Without a version, Orca installs the newest release tag. To stay on a specific one, add it after a
+`#`, for example `https://github.com/ricardo-benicio/orca-docker-containers#v0.8.0`. Later,
+`orca plugin update` brings you to the newest release.
 
 Orca shows what the plugin can access and asks you to approve it before it runs. Open the **Docker**
 icon in the right sidebar tabs.
@@ -113,6 +122,11 @@ Painel na barra lateral direita do Orca que lista os containers do Docker, agrup
 Compose, e atualiza na hora em que algo inicia ou para. Permite iniciar, parar e reiniciar um
 container ou o projeto inteiro, ver os logs, abrir uma porta no navegador e filtrar por nome, imagem,
 projeto ou porta. A interface segue o idioma do Orca (inglês ou português).
+
+**Instalação:** no Orca, Settings → Plugins → Add plugin → From a Git URL, cole
+`https://github.com/ricardo-benicio/orca-docker-containers`, confira o acesso pedido e habilite. Ele
+pode ainda não aparecer no catálogo da comunidade do Orca, mas instalar por essa URL sempre funciona e
+traz a versão mais recente. Veja também [Install](#install).
 
 Requer o comando `docker` no `PATH` do usuário que roda o Orca. O worker roda com o acesso do seu
 usuário, por isso o Orca pede aprovação; ele só executa os comandos listados em "Security" acima.
